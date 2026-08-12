@@ -15,11 +15,14 @@ from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
+from src.access import AdminAccess
 from src.bot_stats_report import build_bot_stats_report
-from src.config import Settings, is_bot_admin
+from src.config import Settings
 from src.control.models import AgentRecord, _utcnow
 from src.control.service import ControlService
 from src.handlers.start import send_main_menu
+from src.health_report import build_health_report
+from src.storage.bot_settings import BotSettingsStore
 from src.storage.metrics import MetricsStore
 from src.storage.users import UserStore
 from src.ui import admin_keyboards as ak
@@ -137,34 +140,133 @@ def setup_admin_control_router(
     settings: Settings,
     metrics: MetricsStore,
     control: ControlService,
+    bot_settings: BotSettingsStore | None = None,
+    access: AdminAccess | None = None,
 ) -> Router:
-    async def _require_admin(message: Message) -> tuple[bool, str]:
+    if access is None and bot_settings is not None:
+        access = AdminAccess(settings, bot_settings)
+
+    async def _require_stats(message: Message) -> tuple[bool, str]:
         uid = _uid(message)
         lang = await _lang(users, message)
-        if not uid or not is_bot_admin(settings, uid):
+        ok = False
+        if access is not None:
+            ok = await access.can_stats(uid)
+        else:
+            from src.config import is_bot_admin
+
+            ok = bool(uid and is_bot_admin(settings, uid))
+        if not ok:
             await message.answer(ak.msg("admin_only", lang))
+            return False, lang
+        return True, lang
+
+    async def _require_settings(message: Message) -> tuple[bool, str]:
+        uid = _uid(message)
+        lang = await _lang(users, message)
+        ok = False
+        if access is not None:
+            ok = await access.can_settings(uid)
+        else:
+            from src.config import is_bot_admin
+
+            ok = bool(uid and is_bot_admin(settings, uid))
+        if not ok:
+            if access is not None and await access.can_stats(uid):
+                await message.answer(ak.msg("settings_denied", lang))
+            else:
+                await message.answer(ak.msg("admin_only", lang))
             return False, lang
         return True, lang
 
     @router.message(F.text.in_(set(texts.MENU_BOT_STATS.values())))
     async def on_bot_stats_entry(message: Message) -> None:
-        ok, lang = await _require_admin(message)
+        ok, lang = await _require_stats(message)
         if not ok:
             return
         uid = _uid(message)
         await users.set_ask_ai(uid, False)
         await control.registry.clear_session(uid)
-        # آمار ربات مثل قبل: مستقیم گزارش عملکرد
         report = await build_bot_stats_report(settings, metrics)
+        await message.answer(report[:3900], reply_markup=ak.stats_hub_keyboard(lang))
+
+    @router.message(F.text.in_(ak.texts("health_status")))
+    async def on_health_from_stats(message: Message) -> None:
+        ok, lang = await _require_stats(message)
+        if not ok:
+            return
+        if bot_settings is None:
+            return
+        # If settings session is active, let admin_settings handle it
+        sess = await bot_settings.get_session(_uid(message))
+        if sess.get("mode") in {"health", "backup", "admins", "owner", "panel", "messages_hub", "target", "slot"}:
+            raise SkipHandler()
+        report = await build_health_report(settings, bot_settings, lang=lang)
         await message.answer(report[:3900], reply_markup=ak.stats_hub_keyboard(lang))
 
     @router.message(F.text.in_(ak.all_admin_control_texts()))
     async def on_admin_button(message: Message) -> None:
-        ok, lang = await _require_admin(message)
+        action = ak.resolve_action(message.text)
+        # Settings-only actions are handled elsewhere
+        if action in {
+            "settings_hub",
+            "settings_messages",
+            "settings_panel",
+            "owner_info",
+            "creator_contact",
+            "bot_config_chat",
+            "build_catalogs",
+            "backup_settings",
+            "backup_export",
+            "backup_import",
+            "health_toggle",
+            "health_times",
+            "health_chat",
+            "manage_admins",
+            "admin_role_full",
+            "admin_role_stats",
+            "admin_remove",
+            "owner_bot_name",
+            "owner_site",
+            "owner_channel",
+            "owner_group",
+            "owner_support",
+            "msg_channel",
+            "msg_group",
+            "msg_support",
+            "msg_test",
+            "msg_account",
+            "catalog_src_site",
+            "catalog_src_channel",
+            "catalog_src_group",
+            "catalog_run",
+            "slot_1",
+            "slot_2",
+            "slot_3",
+            "edit_dest",
+            "edit_template",
+            "edit_schedule",
+            "edit_rules",
+        }:
+            return
+        if action == "health_status":
+            # Prefer stats keyboard path above; ignore duplicate here when settings owns it
+            if bot_settings is not None:
+                sess = await bot_settings.get_session(_uid(message))
+                if sess.get("mode") == "health":
+                    return
+            ok, lang = await _require_stats(message)
+            if not ok or bot_settings is None:
+                return
+            report = await build_health_report(settings, bot_settings, lang=lang)
+            await message.answer(report[:3900], reply_markup=ak.stats_hub_keyboard(lang))
+            return
+
+        # Agent control requires full settings role
+        ok, lang = await _require_settings(message)
         if not ok:
             return
         uid = _uid(message)
-        action = ak.resolve_action(message.text)
         if not action:
             return
 
@@ -509,7 +611,7 @@ def setup_admin_control_router(
     )
     async def on_admin_text(message: Message) -> None:
         uid = _uid(message)
-        if not is_bot_admin(settings, uid):
+        if access is None or not await access.can_settings(uid):
             return
         lang = await _lang(users, message)
         sess = await control.registry.get_session(uid)
@@ -631,7 +733,7 @@ def setup_admin_control_router(
     @router.message(F.chat.type == "private", F.document | F.photo)
     async def on_admin_file(message: Message, bot: Bot) -> None:
         uid = _uid(message)
-        if not is_bot_admin(settings, uid):
+        if access is None or not await access.can_settings(uid):
             return
         lang = await _lang(users, message)
         sess = await control.registry.get_session(uid)
@@ -709,7 +811,7 @@ def setup_admin_control_router(
     # ----- Slash commands -----
     @router.message(Command("agents"))
     async def cmd_agents(message: Message) -> None:
-        ok, _lang_code = await _require_admin(message)
+        ok, _lang_code = await _require_settings(message)
         if not ok:
             return
         agents = await control.registry.list_agents()
@@ -720,7 +822,7 @@ def setup_admin_control_router(
 
     @router.message(Command("agent_status"))
     async def cmd_agent_status(message: Message) -> None:
-        ok, lang = await _require_admin(message)
+        ok, lang = await _require_settings(message)
         if not ok:
             return
         agents = await control.registry.list_agents()
@@ -729,7 +831,7 @@ def setup_admin_control_router(
 
     @router.message(Command("active_agent"))
     async def cmd_active(message: Message) -> None:
-        ok, lang = await _require_admin(message)
+        ok, lang = await _require_settings(message)
         if not ok:
             return
         active = await control.registry.get_active()
@@ -740,7 +842,7 @@ def setup_admin_control_router(
 
     @router.message(Command("change_agent"))
     async def cmd_change(message: Message, command: CommandObject) -> None:
-        ok, lang = await _require_admin(message)
+        ok, lang = await _require_settings(message)
         if not ok:
             return
         arg = (command.args or "").strip()
@@ -755,7 +857,7 @@ def setup_admin_control_router(
 
     @router.message(Command("add_agent"))
     async def cmd_add(message: Message) -> None:
-        ok, lang = await _require_admin(message)
+        ok, lang = await _require_settings(message)
         if not ok:
             return
         uid = _uid(message)
@@ -768,7 +870,7 @@ def setup_admin_control_router(
 
     @router.message(Command("test_agent"))
     async def cmd_test(message: Message, command: CommandObject) -> None:
-        ok, lang = await _require_admin(message)
+        ok, lang = await _require_settings(message)
         if not ok:
             return
         arg = (command.args or "").strip()
@@ -781,14 +883,14 @@ def setup_admin_control_router(
 
     @router.message(Command("api_status"))
     async def cmd_api_status(message: Message) -> None:
-        ok, lang = await _require_admin(message)
+        ok, lang = await _require_settings(message)
         if not ok:
             return
         await _api_list(message, control, lang)
 
     @router.message(Command("failover"))
     async def cmd_failover(message: Message) -> None:
-        ok, lang = await _require_admin(message)
+        ok, lang = await _require_settings(message)
         if not ok:
             return
         # Reuse button path

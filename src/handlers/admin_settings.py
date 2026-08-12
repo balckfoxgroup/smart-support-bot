@@ -11,12 +11,14 @@ from aiogram import F, Router
 from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.types import Message
 
+from src.access import AdminAccess
 from src.ai.client import AIClient, AIClientError
 from src.ai.persona import apply_owner_info, looks_like_reasoning_leak, strip_reasoning_leak
 from src.branding import load_creator_contact
-from src.config import Settings, is_bot_admin
+from src.config import Settings
 from src.control.audit import AuditLog
 from src.control.service import ControlService
+from src.health_report import build_health_report
 from src.knowledge.catalog_builder import build_one_catalog, prepare_work_folder
 from src.knowledge.product_catalogs import load_product_catalogs
 from src.storage.bot_settings import SLOT_KINDS, TARGET_KEYS, BotSettingsStore
@@ -244,14 +246,32 @@ def setup_admin_settings_router(
     audit: AuditLog,
     control: ControlService | None = None,
     ai: AIClient | None = None,
+    access: AdminAccess | None = None,
 ) -> Router:
-    async def _require_admin(message: Message) -> tuple[bool, str]:
+    access = access or AdminAccess(settings, bot_settings)
+
+    async def _require_settings(message: Message) -> tuple[bool, str]:
         uid = _uid(message)
         lang = await _lang(users, message)
-        if not uid or not is_bot_admin(settings, uid):
-            await message.answer(ak.msg("admin_only", lang))
+        if not uid or not await access.can_settings(uid):
+            if uid and await access.can_stats(uid):
+                await message.answer(ak.msg("settings_denied", lang))
+            else:
+                await message.answer(ak.msg("admin_only", lang))
             return False, lang
         return True, lang
+
+    async def _admins_card(lang: str) -> str:
+        env_ids = sorted(settings.bot_admin_ids)
+        env_txt = "\n".join(f"• {i} (full/env)" for i in env_ids) or "—"
+        extra = await bot_settings.list_extra_admins()
+        extra_txt = (
+            "\n".join(f"• {uid} ({role})" for uid, role in extra) if extra else "—"
+        )
+        return ak.msg("admins_card", lang).format(
+            env_admins=env_txt,
+            extra_admins=extra_txt,
+        )
 
     async def _clear_control(uid: int) -> None:
         if control is not None:
@@ -287,7 +307,7 @@ def setup_admin_settings_router(
 
     @router.message(F.text.in_(set(texts.MENU_SETTINGS.values()) | ak.texts("settings_hub")))
     async def on_settings_entry(message: Message) -> None:
-        ok, lang = await _require_admin(message)
+        ok, lang = await _require_settings(message)
         if not ok:
             return
         uid = _uid(message)
@@ -339,6 +359,17 @@ def setup_admin_settings_router(
         | ak.texts("edit_panel_port_legacy")
         | ak.texts("edit_panel_inbound")
         | ak.texts("edit_panel_inbound_legacy")
+        | ak.texts("backup_settings")
+        | ak.texts("backup_export")
+        | ak.texts("backup_import")
+        | ak.texts("health_status")
+        | ak.texts("health_toggle")
+        | ak.texts("health_times")
+        | ak.texts("health_chat")
+        | ak.texts("manage_admins")
+        | ak.texts("admin_role_full")
+        | ak.texts("admin_role_stats")
+        | ak.texts("admin_remove")
         | ak.texts("cancel")
     )
     # include toggle-prefixed labels
@@ -348,13 +379,30 @@ def setup_admin_settings_router(
 
     @router.message(F.text.in_(button_texts))
     async def on_settings_button(message: Message) -> None:
-        ok, lang = await _require_admin(message)
-        if not ok:
-            return
         uid = _uid(message)
+        lang = await _lang(users, message)
         action = ak.resolve_action(message.text)
         if not action:
             return
+
+        # Health report is allowed for stats-only admins too.
+        if action == "health_status":
+            if not await access.can_stats(uid):
+                await message.answer(ak.msg("admin_only", lang))
+                return
+            report = await build_health_report(settings, bot_settings, lang=lang)
+            if await access.can_settings(uid):
+                await bot_settings.set_session(uid, {"mode": "health"})
+                await message.answer(report[:3900], reply_markup=ak.health_keyboard(lang))
+            else:
+                await message.answer(report[:3900], reply_markup=ak.stats_hub_keyboard(lang))
+            return
+
+        ok, lang = await _require_settings(message)
+        if not ok:
+            return
+        uid = _uid(message)
+        await users.set_ask_ai(uid, False)
 
         if action == "settings_back":
             await bot_settings.clear_session(uid)
@@ -362,11 +410,89 @@ def setup_admin_settings_router(
             await _show_settings_hub(message, lang)
             return
 
+        if action == "backup_settings":
+            await bot_settings.set_session(uid, {"mode": "backup"})
+            await message.answer(
+                "💾 " + ("پشتیبان تنظیمات" if lang == "fa" else "Settings backup"),
+                reply_markup=ak.backup_keyboard(lang),
+            )
+            return
+
+        if action == "backup_export":
+            import json
+            from datetime import datetime
+
+            from aiogram.types import BufferedInputFile
+
+            payload = await bot_settings.export_backup()
+            raw = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+            name = f"smart-support-bot-settings-{datetime.utcnow().strftime('%Y%m%d-%H%M')}.json"
+            await message.answer_document(
+                BufferedInputFile(raw, filename=name),
+                caption=ak.msg("backup_exported", lang),
+                reply_markup=ak.backup_keyboard(lang),
+            )
+            await audit.write("export_settings_backup", admin_id=uid, detail=name)
+            return
+
+        if action == "backup_import":
+            await bot_settings.set_session(uid, {"mode": "import_backup"})
+            await message.answer(
+                ak.msg("ask_backup_import", lang),
+                reply_markup=ak.cancel_keyboard(lang),
+            )
+            return
+
+        if action == "health_toggle":
+            cfg = await bot_settings.get_health_settings()
+            cfg = await bot_settings.update_health_settings(enabled=not cfg.get("enabled", True))
+            state = ("روشن" if cfg.get("enabled") else "خاموش") if lang == "fa" else ("on" if cfg.get("enabled") else "off")
+            await message.answer(
+                f"{'گزارش روزانه' if lang == 'fa' else 'Daily report'}: {state}",
+                reply_markup=ak.health_keyboard(lang),
+            )
+            return
+
+        if action == "health_times":
+            cfg = await bot_settings.get_health_settings()
+            await bot_settings.set_session(uid, {"mode": "edit_health", "health_field": "times"})
+            await message.answer(
+                ak.msg("ask_health_times", lang) + "\n" + _fmt_current(lang, cfg.get("times")),
+                reply_markup=ak.cancel_keyboard(lang),
+            )
+            return
+
+        if action == "health_chat":
+            cfg = await bot_settings.get_health_settings()
+            await bot_settings.set_session(uid, {"mode": "edit_health", "health_field": "chat_id"})
+            await message.answer(
+                ak.msg("ask_health_chat", lang) + "\n" + _fmt_current(lang, cfg.get("chat_id") or "—"),
+                reply_markup=ak.cancel_keyboard(lang),
+            )
+            return
+
+        if action == "manage_admins":
+            await bot_settings.set_session(uid, {"mode": "admins"})
+            await message.answer(await _admins_card(lang), reply_markup=ak.admins_keyboard(lang))
+            return
+
+        if action in {"admin_role_full", "admin_role_stats", "admin_remove"}:
+            await bot_settings.set_session(
+                uid,
+                {"mode": "edit_admin", "admin_action": action},
+            )
+            await message.answer(ak.msg("ask_admin_id", lang), reply_markup=ak.cancel_keyboard(lang))
+            return
+
         if action == "nav_back":
             sess = await bot_settings.get_session(uid)
             mode = str(sess.get("mode") or "")
             target_key = str(sess.get("target_key") or "")
             slot_index = sess.get("slot_index")
+            if mode in {"backup", "health", "admins", "catalog_wizard"}:
+                await bot_settings.clear_session(uid)
+                await _show_settings_hub(message, lang)
+                return
             if mode == "catalog_wizard":
                 await bot_settings.clear_session(uid)
                 await _show_settings_hub(message, lang)
@@ -677,12 +803,43 @@ def setup_admin_settings_router(
     @router.message(F.chat.type == "private", F.document | F.photo)
     async def on_catalog_upload(message: Message) -> None:
         uid = _uid(message)
-        if not is_bot_admin(settings, uid) or not message.bot:
+        if not await access.can_settings(uid) or not message.bot:
             return
         sess = await bot_settings.get_session(uid)
+        lang = await _lang(users, message)
+
+        if sess.get("mode") == "import_backup":
+            if not message.document:
+                await message.answer(ak.msg("ask_backup_import", lang))
+                return
+            import json
+            from io import BytesIO
+
+            buf = BytesIO()
+            await message.bot.download(message.document, destination=buf)
+            try:
+                payload = json.loads(buf.getvalue().decode("utf-8"))
+                applied = await bot_settings.import_backup(payload)
+            except Exception as exc:  # noqa: BLE001
+                await message.answer(f"❌ {exc}", reply_markup=ak.backup_keyboard(lang))
+                return
+            apply_owner_info(await bot_settings.get_owner())
+            await audit.write(
+                "import_settings_backup",
+                admin_id=uid,
+                detail=",".join(applied),
+            )
+            await bot_settings.set_session(uid, {"mode": "backup"})
+            await message.answer(
+                ak.msg("backup_imported", lang).format(
+                    sections=", ".join(applied) or "—"
+                ),
+                reply_markup=ak.backup_keyboard(lang),
+            )
+            return
+
         if sess.get("mode") != "catalog_wizard":
             raise SkipHandler()
-        lang = await _lang(users, message)
         staging = Path(str(sess.get("catalog_staging") or _staging_dir(settings, uid)))
         staging.mkdir(parents=True, exist_ok=True)
         try:
@@ -717,7 +874,7 @@ def setup_admin_settings_router(
     )
     async def on_settings_text(message: Message) -> None:
         uid = _uid(message)
-        if not is_bot_admin(settings, uid):
+        if not await access.can_settings(uid):
             return
         lang = await _lang(users, message)
         sess = await bot_settings.get_session(uid)
@@ -727,6 +884,8 @@ def setup_admin_settings_router(
             "edit_panel",
             "edit_slot",
             "edit_owner",
+            "edit_health",
+            "edit_admin",
             "scoped_rules_ai",
             "bot_config_chat",
             "catalog_wizard",
@@ -735,6 +894,55 @@ def setup_admin_settings_router(
 
         text = (message.text or "").strip()
         if not text:
+            return
+
+        if mode == "edit_health":
+            field = str(sess.get("health_field") or "")
+            if field == "times":
+                await bot_settings.update_health_settings(times=text)
+            elif field == "chat_id":
+                await bot_settings.update_health_settings(chat_id=text)
+            else:
+                await bot_settings.clear_session(uid)
+                await _show_settings_hub(message, lang)
+                return
+            await bot_settings.set_session(uid, {"mode": "health"})
+            await message.answer(ak.msg("saved_ok", lang), reply_markup=ak.health_keyboard(lang))
+            report = await build_health_report(settings, bot_settings, lang=lang)
+            await message.answer(report[:3900], reply_markup=ak.health_keyboard(lang))
+            return
+
+        if mode == "edit_admin":
+            action = str(sess.get("admin_action") or "")
+            try:
+                target_id = int(text.replace("@", "").strip())
+            except ValueError:
+                await message.answer(ak.msg("ask_admin_id", lang), reply_markup=ak.cancel_keyboard(lang))
+                return
+            if target_id in settings.bot_admin_ids and action == "admin_remove":
+                await message.answer(
+                    ("ادمین env را از BOT_ADMIN_IDS حذف کنید." if lang == "fa" else "Remove env admins from BOT_ADMIN_IDS."),
+                    reply_markup=ak.admins_keyboard(lang),
+                )
+                return
+            if action == "admin_role_full":
+                await bot_settings.set_admin_role(target_id, "full")
+            elif action == "admin_role_stats":
+                await bot_settings.set_admin_role(target_id, "stats")
+            elif action == "admin_remove":
+                await bot_settings.remove_admin(target_id)
+            else:
+                await bot_settings.clear_session(uid)
+                await _show_settings_hub(message, lang)
+                return
+            await audit.write(
+                "update_admin_role",
+                admin_id=uid,
+                detail=f"{action}:{target_id}",
+            )
+            await bot_settings.set_session(uid, {"mode": "admins"})
+            await message.answer(ak.msg("saved_ok", lang))
+            await message.answer(await _admins_card(lang), reply_markup=ak.admins_keyboard(lang))
             return
 
         if mode == "catalog_wizard":

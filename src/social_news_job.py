@@ -983,6 +983,9 @@ async def run_social_news_job(
             news = await _pick_publishable_news(settings, sources, rules_prompt=rules)
             if news is None:
                 log.info("No publishable social news after soft single-source + multi-source filters")
+                from src.job_status import record_job
+
+                record_job(settings.data_dir, "social_news", ok=False, detail="nothing publishable")
                 continue
             if not news.image_url:
                 news.image_url = await _extract_og_image(news.link)
@@ -998,8 +1001,14 @@ async def run_social_news_job(
             )
             _record_publication(settings, news, target=str(chat_id))
             log.info("Social news posted to %s: %s", chat_id, news.link)
+            from src.job_status import record_job
+
+            record_job(settings.data_dir, "social_news", ok=True, detail=news.link[:120])
         except Exception as exc:  # noqa: BLE001
             log.exception("Social news publish failed: %s", exc)
+            from src.job_status import record_job
+
+            record_job(settings.data_dir, "social_news", ok=False, detail=str(exc)[:200])
 
 
 async def run_social_news_once(

@@ -257,3 +257,10 @@ journalctl -u smart-support-bot.service -f
 پروژه‌های بیشتر: https://github.com/balckfoxgroup?tab=repositories
 
 از همراهی و Star شما سپاسگزاریم.
+
+
+### Settings Backup / Health / Admin Roles
+
+- Export/Import settings JSON from admin Settings
+- Daily health report + manual Health Status
+- Extra admins: `full` (settings) or `stats` (stats/health only)

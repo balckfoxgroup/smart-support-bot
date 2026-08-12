@@ -105,7 +105,9 @@ async def run() -> None:
     if bot_settings.bootstrap_from_settings(settings):
         log.info("Bot settings seeded from environment (messages + panel)")
 
+    from src.access import AdminAccess
     from src.ai.persona import apply_owner_info
+    from src.health_job import run_health_report_job
     from src.runtime.gate import run_titil_gate
 
     run_titil_gate(
@@ -114,6 +116,7 @@ async def run() -> None:
         data_dir=settings.data_dir,
     )
     apply_owner_info(await bot_settings.get_owner())
+    access = AdminAccess(settings, bot_settings)
 
     knowledge = KnowledgeLoader(settings)
     knowledge.load()
@@ -139,10 +142,13 @@ async def run() -> None:
     nightly_task: asyncio.Task | None = None
     social_news_task: asyncio.Task | None = None
     convo_analysis_task: asyncio.Task | None = None
+    health_task: asyncio.Task | None = None
     heartbeat_task: asyncio.Task | None = None
 
     dp = Dispatcher()
-    dp.include_router(setup_start_router(users, settings=settings, metrics=metrics))
+    dp.include_router(
+        setup_start_router(users, settings=settings, metrics=metrics, access=access)
+    )
     # Settings before agent control so message/panel wizards take priority
     dp.include_router(
         setup_admin_settings_router(
@@ -152,18 +158,28 @@ async def run() -> None:
             audit=audit,
             control=control,
             ai=ai,
+            access=access,
         )
     )
     dp.include_router(
         setup_admin_control_router(
-            users, settings=settings, metrics=metrics, control=control
+            users,
+            settings=settings,
+            metrics=metrics,
+            control=control,
+            bot_settings=bot_settings,
+            access=access,
         )
     )
     dp.include_router(setup_safety_router(users, settings=settings))
-    dp.include_router(setup_menu_router(users, settings=settings, metrics=metrics))
+    dp.include_router(
+        setup_menu_router(users, settings=settings, metrics=metrics, access=access)
+    )
     dp.include_router(setup_group_router(settings, users, ai, knowledge, catalog))
     dp.include_router(
-        setup_chat_router(settings, users, ai, intents, knowledge, catalog, metrics)
+        setup_chat_router(
+            settings, users, ai, intents, knowledge, catalog, metrics, access=access
+        )
     )
 
     active = await registry.get_active()
@@ -216,6 +232,10 @@ async def run() -> None:
             convo_chat,
         )
     heartbeat_task = asyncio.create_task(_heartbeat_loop(), name="safety-heartbeat")
+    health_task = asyncio.create_task(
+        run_health_report_job(settings, bot, bot_settings),
+        name="health-report-job",
+    )
     try:
         # Drop pending updates so restart does not replay a backlog
         await bot.delete_webhook(drop_pending_updates=True)
@@ -225,6 +245,10 @@ async def run() -> None:
             heartbeat_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await heartbeat_task
+        if health_task:
+            health_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await health_task
         if nightly_task:
             nightly_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

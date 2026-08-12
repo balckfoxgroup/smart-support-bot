@@ -21,6 +21,7 @@ from src.ai.persona import (
     wants_contact_links,
     wants_sales_nudge,
 )
+from src.access import AdminAccess
 from src.config import Settings, is_bot_admin
 from src.knowledge.catalog_search import CatalogSiteSearch, looks_unsure, unsure_handoff
 from src.knowledge.intents import IntentMatcher, looks_identity
@@ -56,6 +57,7 @@ def setup_chat_router(
     knowledge: KnowledgeLoader,
     catalog: CatalogSiteSearch,
     metrics: MetricsStore,
+    access: AdminAccess | None = None,
 ) -> Router:
     @router.message(F.chat.type == "private", F.text.func(lambda t: bool(t) and not str(t).startswith("/")))
     async def on_text(message: Message) -> None:
@@ -74,17 +76,25 @@ def setup_chat_router(
             return
 
         lang = await users.get_lang(user.id, user.language_code)
-        admin = is_bot_admin(settings, user.id)
+        if access is not None:
+            menu_kb = keyboards.main_menu_keyboard(
+                lang,
+                can_settings=await access.can_settings(user.id),
+                can_stats=await access.can_stats(user.id),
+            )
+        else:
+            admin = is_bot_admin(settings, user.id)
+            menu_kb = keyboards.main_menu_keyboard(lang, is_admin=admin)
 
         if not await users.is_ask_ai(user.id):
             await message.answer(
                 texts.t(texts.USE_MENU_OR_ASK_AI, lang),
-                reply_markup=keyboards.main_menu_keyboard(lang, is_admin=admin),
+                reply_markup=menu_kb,
             )
             if not await users.was_group_invited(user.id):
                 await message.answer(
                     texts.t(texts.GROUP_INVITE, lang),
-                    reply_markup=keyboards.main_menu_keyboard(lang, is_admin=admin),
+                    reply_markup=menu_kb,
                 )
                 await users.set_group_invited(user.id, True)
             return

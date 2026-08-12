@@ -551,6 +551,9 @@ async def run_conversation_analysis_once(
             result=f"published_to_topics:{sent}",
             success=sent > 0,
         )
+    from src.job_status import record_job
+
+    record_job(settings.data_dir, "convo_analysis", ok=True, detail=target.topic[:120])
     return True
 
 

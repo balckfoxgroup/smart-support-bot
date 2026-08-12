@@ -21,6 +21,50 @@ _LABELS: dict[str, dict[Lang, str]] = {
         "fa": "⚙️ تنظیمات",
         "en": "⚙️ Settings",
     },
+    "backup_settings": {
+        "fa": "💾 پشتیبان تنظیمات",
+        "en": "💾 Settings Backup",
+    },
+    "backup_export": {
+        "fa": "📤 خروجی پشتیبان",
+        "en": "📤 Export Backup",
+    },
+    "backup_import": {
+        "fa": "📥 درون‌ریزی پشتیبان",
+        "en": "📥 Import Backup",
+    },
+    "health_status": {
+        "fa": "🩺 وضعیت سلامت",
+        "en": "🩺 Health Status",
+    },
+    "manage_admins": {
+        "fa": "👥 مدیریت ادمین‌ها",
+        "en": "👥 Manage Admins",
+    },
+    "admin_role_full": {
+        "fa": "🔑 نقش کامل (تنظیمات)",
+        "en": "🔑 Role: full (settings)",
+    },
+    "admin_role_stats": {
+        "fa": "📊 نقش فقط آمار",
+        "en": "📊 Role: stats only",
+    },
+    "admin_remove": {
+        "fa": "🗑 حذف ادمین اضافی",
+        "en": "🗑 Remove Extra Admin",
+    },
+    "health_toggle": {
+        "fa": "⏱ روشن/خاموش گزارش روزانه",
+        "en": "⏱ Toggle Daily Health Report",
+    },
+    "health_times": {
+        "fa": "⏰ زمان گزارش سلامت",
+        "en": "⏰ Health Report Times",
+    },
+    "health_chat": {
+        "fa": "🎯 مقصد گزارش سلامت",
+        "en": "🎯 Health Report Destination",
+    },
     "owner_info": {
         "fa": "📋 اطلاعات اصلی",
         "en": "📋 Main Info",
@@ -476,6 +520,48 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
         "fa": "🏷 نام ربات را بفرستید (همان نام پروفایل تلگرام که کاربر می‌بیند):",
         "en": "🏷 Send the bot name (Telegram profile name users see):",
     },
+    "ask_admin_id": {
+        "fa": "شناسه عددی تلگرام ادمین را بفرستید:",
+        "en": "Send the Telegram numeric user id for the admin:",
+    },
+    "ask_health_times": {
+        "fa": "زمان گزارش سلامت را بفرستید (مثل 09:00 یا 09:00,21:00):",
+        "en": "Send health report times (e.g. 09:00 or 09:00,21:00):",
+    },
+    "ask_health_chat": {
+        "fa": "مقصد گزارش سلامت را بفرستید (آیدی عددی یا @username):",
+        "en": "Send health report destination (numeric id or @username):",
+    },
+    "ask_backup_import": {
+        "fa": "فایل JSON پشتیبان را به‌صورت Document بفرستید:",
+        "en": "Send the backup JSON as a Document:",
+    },
+    "backup_exported": {
+        "fa": "✅ فایل پشتیبان تنظیمات آماده است. در جای امن نگه دارید (توکن پنل داخلش هست).",
+        "en": "✅ Settings backup file is ready. Keep it private (includes panel token).",
+    },
+    "backup_imported": {
+        "fa": "✅ پشتیبان درون‌ریزی شد: {sections}",
+        "en": "✅ Backup imported: {sections}",
+    },
+    "admins_card": {
+        "fa": (
+            "👥 مدیریت ادمین‌ها\n\n"
+            "ادمین‌های env (همیشه کامل):\n{env_admins}\n\n"
+            "ادمین‌های اضافی:\n{extra_admins}\n\n"
+            "نقش کامل = تنظیمات + آمار\nنقش آمار = فقط آمار و سلامت"
+        ),
+        "en": (
+            "👥 Manage Admins\n\n"
+            "Env admins (always full):\n{env_admins}\n\n"
+            "Extra admins:\n{extra_admins}\n\n"
+            "full = settings + stats\nstats = stats/health only"
+        ),
+    },
+    "settings_denied": {
+        "fa": "دسترسی تنظیمات ندارید. نقش شما فقط آمار است.",
+        "en": "No settings access. Your role is stats-only.",
+    },
     "catalog_building": {
         "fa": "📦 در حال ساخت کاتالوگ از پوشه catalog_inbox …",
         "en": "📦 Building catalogs from catalog_inbox …",
@@ -682,18 +768,6 @@ def all_admin_control_texts() -> frozenset[str]:
     return frozenset(out)
 
 
-def stats_hub_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=label("stats_report", lang))],
-            [KeyboardButton(text=label("stats_back", lang))],
-        ],
-        resize_keyboard=True,
-        is_persistent=True,
-        input_field_placeholder="Statistics / آمار",
-    )
-
-
 def settings_hub_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -703,12 +777,67 @@ def settings_hub_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
             [KeyboardButton(text=label("change_agent_api", lang))],
             [KeyboardButton(text=label("settings_messages", lang))],
             [KeyboardButton(text=label("settings_panel", lang))],
+            [KeyboardButton(text=label("backup_settings", lang))],
+            [KeyboardButton(text=label("health_status", lang))],
+            [KeyboardButton(text=label("manage_admins", lang))],
             [KeyboardButton(text=label("creator_contact", lang))],
             [KeyboardButton(text=label("stats_back", lang))],
         ],
         resize_keyboard=True,
         is_persistent=True,
         input_field_placeholder="Settings / تنظیمات",
+    )
+
+
+def backup_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=label("backup_export", lang))],
+            [KeyboardButton(text=label("backup_import", lang))],
+            [KeyboardButton(text=label("settings_back", lang))],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def health_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=label("health_status", lang))],
+            [KeyboardButton(text=label("health_toggle", lang))],
+            [KeyboardButton(text=label("health_times", lang))],
+            [KeyboardButton(text=label("health_chat", lang))],
+            [KeyboardButton(text=label("settings_back", lang))],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def admins_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=label("admin_role_full", lang))],
+            [KeyboardButton(text=label("admin_role_stats", lang))],
+            [KeyboardButton(text=label("admin_remove", lang))],
+            [KeyboardButton(text=label("settings_back", lang))],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def stats_hub_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=label("stats_report", lang))],
+            [KeyboardButton(text=label("health_status", lang))],
+            [KeyboardButton(text=label("stats_back", lang))],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="Statistics / آمار",
     )
 
 

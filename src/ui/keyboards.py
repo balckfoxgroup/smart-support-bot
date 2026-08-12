@@ -96,20 +96,32 @@ def language_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
-def main_menu_keyboard(lang: Lang, *, is_admin: bool = False) -> ReplyKeyboardMarkup:
+def main_menu_keyboard(
+    lang: Lang,
+    *,
+    is_admin: bool = False,
+    can_settings: bool | None = None,
+    can_stats: bool | None = None,
+) -> ReplyKeyboardMarkup:
     """Ask AI first, then one key per product catalog (no Products wrapper)."""
     rows: list[list[KeyboardButton]] = [
         [KeyboardButton(text=_label("ask_ai", lang))],
     ]
     for product in get_product_catalogs():
         rows.append([KeyboardButton(text=product.label(lang))])
-    if is_admin:
+    show_settings = can_settings if can_settings is not None else is_admin
+    show_stats = can_stats if can_stats is not None else is_admin
+    if show_settings and show_stats:
         rows.append(
             [
                 KeyboardButton(text=_label("bot_stats", lang)),
                 KeyboardButton(text=_label("settings", lang)),
             ]
         )
+    elif show_settings:
+        rows.append([KeyboardButton(text=_label("settings", lang))])
+    elif show_stats:
+        rows.append([KeyboardButton(text=_label("bot_stats", lang))])
     return ReplyKeyboardMarkup(
         keyboard=rows,
         resize_keyboard=True,

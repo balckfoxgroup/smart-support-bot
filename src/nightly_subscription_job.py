@@ -197,7 +197,13 @@ async def run_nightly_subscription_job(
                 parse_mode="HTML",
             )
             log.info("Nightly subscription created and sent to %s", chat_id)
+            from src.job_status import record_job
+
+            record_job(settings.data_dir, "nightly_config", ok=True, detail=f"sent to {chat_id}")
         except (PanelAPIError, Exception) as exc:  # noqa: BLE001
             log.exception("Nightly subscription job failed: %s", exc)
+            from src.job_status import record_job
+
+            record_job(settings.data_dir, "nightly_config", ok=False, detail=str(exc)[:200])
             # Avoid tight retry loops; next run remains next day.
 

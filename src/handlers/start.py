@@ -6,6 +6,7 @@ from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.types import BotCommand, Message
 
+from src.access import AdminAccess
 from src.config import Settings, is_bot_admin
 from src.storage.metrics import MetricsStore
 from src.storage.users import UserStore
@@ -80,6 +81,7 @@ async def send_main_menu(
     users: UserStore | None = None,
     user_id: int = 0,
     settings: Settings | None = None,
+    access: "AdminAccess | None" = None,
 ) -> None:
     if users is not None and user_id:
         await users.set_ask_ai(user_id, False)
@@ -87,10 +89,22 @@ async def send_main_menu(
         f"{texts.t(texts.MAIN_MENU_TITLE, lang)}\n"
         f"{texts.t(texts.MAIN_MENU_HINT, lang)}"
     )
-    admin = bool(settings and user_id and is_bot_admin(settings, user_id))
+    can_settings = False
+    can_stats = False
+    if access is not None and user_id:
+        can_settings = await access.can_settings(user_id)
+        can_stats = await access.can_stats(user_id)
+    elif settings and user_id and is_bot_admin(settings, user_id):
+        can_settings = True
+        can_stats = True
     await message.answer(
         body,
-        reply_markup=keyboards.main_menu_keyboard(lang, is_admin=admin),
+        reply_markup=keyboards.main_menu_keyboard(
+            lang,
+            is_admin=can_settings or can_stats,
+            can_settings=can_settings,
+            can_stats=can_stats,
+        ),
     )
 
 
@@ -101,6 +115,7 @@ async def send_welcome_flow(
     users: UserStore | None = None,
     user_id: int = 0,
     settings: Settings | None = None,
+    access: AdminAccess | None = None,
 ) -> None:
     await message.answer(texts.welcome_after_lang(lang))
     await send_main_menu(
@@ -109,6 +124,7 @@ async def send_welcome_flow(
         users=users,
         user_id=user_id,
         settings=settings,
+        access=access,
     )
 
 
@@ -117,6 +133,7 @@ def setup_start_router(
     *,
     settings: Settings,
     metrics: MetricsStore,
+    access: AdminAccess | None = None,
 ) -> Router:
     @router.message(CommandStart())
     async def cmd_start(message: Message) -> None:
@@ -137,6 +154,7 @@ def setup_start_router(
             users=users,
             user_id=uid,
             settings=settings,
+            access=access,
         )
 
     @router.message(Command("help"))
@@ -153,6 +171,7 @@ def setup_start_router(
             users=users,
             user_id=uid,
             settings=settings,
+            access=access,
         )
 
     @router.message(Command("lang"))
@@ -177,6 +196,7 @@ def setup_start_router(
             users=users,
             user_id=uid,
             settings=settings,
+            access=access,
         )
 
     return router

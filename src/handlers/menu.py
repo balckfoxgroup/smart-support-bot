@@ -6,6 +6,7 @@ from aiogram import F, Router
 from aiogram.filters import Filter
 from aiogram.types import Message
 
+from src.access import AdminAccess
 from src.config import Settings, is_bot_admin
 from src.handlers.start import send_language_picker, send_main_menu
 from src.knowledge.product_catalogs import (
@@ -64,6 +65,7 @@ def setup_menu_router(
     *,
     settings: Settings,
     metrics: MetricsStore,
+    access: AdminAccess | None = None,
 ) -> Router:
     @router.message(F.chat.type == "private", IsMenuButton())
     async def on_menu_button(message: Message) -> None:
@@ -81,8 +83,6 @@ def setup_menu_router(
         if not action:
             return
 
-        admin = is_bot_admin(settings, uid)
-
         if action == "lang":
             await users.set_ask_ai(uid, False)
             await send_language_picker(message, users)
@@ -95,8 +95,19 @@ def setup_menu_router(
                 users=users,
                 user_id=uid,
                 settings=settings,
+                access=access,
             )
             return
+
+        async def _menu_kb():
+            if access is not None:
+                return keyboards.main_menu_keyboard(
+                    lang,
+                    can_settings=await access.can_settings(uid),
+                    can_stats=await access.can_stats(uid),
+                )
+            admin = is_bot_admin(settings, uid)
+            return keyboards.main_menu_keyboard(lang, is_admin=admin)
 
         # bot_stats / settings are handled by admin routers.
         if action in {"bot_stats", "settings"}:
@@ -158,7 +169,7 @@ def setup_menu_router(
                     return
             await message.answer(
                 texts.t(texts.MAIN_MENU_HINT, lang),
-                reply_markup=keyboards.main_menu_keyboard(lang, is_admin=admin),
+                reply_markup=await _menu_kb(),
             )
             return
 
@@ -186,7 +197,7 @@ def setup_menu_router(
 
         await message.answer(
             body,
-            reply_markup=keyboards.main_menu_keyboard(lang, is_admin=admin),
+            reply_markup=await _menu_kb(),
         )
 
     return router

@@ -210,8 +210,14 @@ class BotSettingsStore:
             "targets": {},
             "panel": {},
             "owner": {},
+            "admins": {},
+            "health": {
+                "enabled": True,
+                "times": "09:00",
+                "chat_id": "",
+            },
             "admin_sessions": {},
-            "version": 2,
+            "version": 3,
         }
         self._load()
 
@@ -227,6 +233,11 @@ class BotSettingsStore:
                 self._data.setdefault("targets", {})
                 self._data.setdefault("panel", {})
                 self._data.setdefault("owner", {})
+                self._data.setdefault("admins", {})
+                self._data.setdefault(
+                    "health",
+                    {"enabled": True, "times": "09:00", "chat_id": ""},
+                )
                 self._data.setdefault("admin_sessions", {})
         except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
             logger.warning("bot_settings.json unreadable (%s); starting fresh", exc)
@@ -542,6 +553,173 @@ class BotSettingsStore:
             sessions = self._data.setdefault("admin_sessions", {})
             sessions.pop(str(admin_id), None)
             self._save_sync()
+
+    async def get_admin_role(self, user_id: int) -> str:
+        async with self._lock:
+            raw = (self._data.get("admins") or {}).get(str(int(user_id)))
+            if isinstance(raw, dict):
+                role = str(raw.get("role") or "").strip().lower()
+            else:
+                role = str(raw or "").strip().lower()
+            return role if role in {"full", "stats"} else ""
+
+    async def list_extra_admins(self) -> list[tuple[int, str]]:
+        async with self._lock:
+            out: list[tuple[int, str]] = []
+            for key, val in (self._data.get("admins") or {}).items():
+                try:
+                    uid = int(key)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(val, dict):
+                    role = str(val.get("role") or "").strip().lower()
+                else:
+                    role = str(val or "").strip().lower()
+                if role in {"full", "stats"}:
+                    out.append((uid, role))
+            out.sort(key=lambda x: x[0])
+            return out
+
+    async def set_admin_role(self, user_id: int, role: str) -> None:
+        role = (role or "").strip().lower()
+        if role not in {"full", "stats"}:
+            raise ValueError("role must be full or stats")
+        async with self._lock:
+            admins = self._data.setdefault("admins", {})
+            admins[str(int(user_id))] = {"role": role}
+            self._save_sync()
+
+    async def remove_admin(self, user_id: int) -> bool:
+        async with self._lock:
+            admins = self._data.setdefault("admins", {})
+            removed = admins.pop(str(int(user_id)), None) is not None
+            if removed:
+                self._save_sync()
+            return removed
+
+    async def get_health_settings(self) -> dict[str, Any]:
+        async with self._lock:
+            raw = self._data.get("health") if isinstance(self._data.get("health"), dict) else {}
+            return {
+                "enabled": bool(raw.get("enabled", True)),
+                "times": str(raw.get("times") or "09:00").strip() or "09:00",
+                "chat_id": str(raw.get("chat_id") or "").strip(),
+            }
+
+    async def update_health_settings(self, **fields: Any) -> dict[str, Any]:
+        async with self._lock:
+            cur = self._data.setdefault(
+                "health",
+                {"enabled": True, "times": "09:00", "chat_id": ""},
+            )
+            if not isinstance(cur, dict):
+                cur = {"enabled": True, "times": "09:00", "chat_id": ""}
+                self._data["health"] = cur
+            if "enabled" in fields:
+                cur["enabled"] = bool(fields["enabled"])
+            if "times" in fields and fields["times"] is not None:
+                cur["times"] = str(fields["times"]).strip() or "09:00"
+            if "chat_id" in fields and fields["chat_id"] is not None:
+                cur["chat_id"] = str(fields["chat_id"]).strip()
+            self._save_sync()
+            return dict(cur)
+
+    async def export_backup(self) -> dict[str, Any]:
+        """Export settings (panel token decrypted). Sessions excluded."""
+        from datetime import datetime, timezone
+
+        async with self._lock:
+            panel = PanelSettings.from_dict(self._data.get("panel"))
+            token = self.panel_token(panel)
+            admins_out: dict[str, str] = {}
+            for k, v in (self._data.get("admins") or {}).items():
+                if isinstance(v, dict):
+                    role = str(v.get("role") or "")
+                else:
+                    role = str(v or "")
+                if role in {"full", "stats"}:
+                    admins_out[str(k)] = role
+            health = self._data.get("health") if isinstance(self._data.get("health"), dict) else {}
+            return {
+                "format": "smart-support-bot-settings",
+                "version": 1,
+                "exported_at": datetime.now(timezone.utc).isoformat(),
+                "owner": deepcopy(self._data.get("owner") or {}),
+                "targets": deepcopy(self._data.get("targets") or {}),
+                "panel": {
+                    "base_url": panel.base_url,
+                    "api_token": token,
+                    "required_port": panel.required_port,
+                    "inbound_id": panel.inbound_id,
+                },
+                "admins": admins_out,
+                "health": {
+                    "enabled": bool(health.get("enabled", True)),
+                    "times": str(health.get("times") or "09:00"),
+                    "chat_id": str(health.get("chat_id") or ""),
+                },
+            }
+
+    async def import_backup(self, payload: dict[str, Any]) -> list[str]:
+        """Import backup JSON. Returns list of applied section names."""
+        if not isinstance(payload, dict):
+            raise ValueError("invalid backup")
+        fmt = str(payload.get("format") or "")
+        if fmt and fmt != "smart-support-bot-settings":
+            raise ValueError("unknown backup format")
+        applied: list[str] = []
+        async with self._lock:
+            if isinstance(payload.get("owner"), dict):
+                self._data["owner"] = OwnerInfo.from_dict(payload["owner"]).to_dict()
+                applied.append("owner")
+            if isinstance(payload.get("targets"), dict):
+                targets: dict[str, Any] = {}
+                for key in TARGET_KEYS:
+                    raw = payload["targets"].get(key)
+                    targets[key] = MessageTarget.from_dict(
+                        key, raw if isinstance(raw, dict) else {}
+                    ).to_dict()
+                self._data["targets"] = targets
+                applied.append("targets")
+            if isinstance(payload.get("panel"), dict):
+                p = payload["panel"]
+                token = str(p.get("api_token") or "").strip()
+                enc_in = str(p.get("api_token_enc") or "").strip()
+                if token:
+                    enc = encrypt_secret(token, self._master)
+                elif enc_in:
+                    # Already encrypted blob from same bot, or re-encrypt if decrypt works
+                    plain = decrypt_secret(enc_in, self._master)
+                    enc = enc_in if plain else encrypt_secret(enc_in, self._master)
+                else:
+                    enc = ""
+                self._data["panel"] = PanelSettings(
+                    base_url=str(p.get("base_url") or "").rstrip("/"),
+                    api_token_enc=enc,
+                    required_port=int(p.get("required_port") or 443),
+                    inbound_id=int(p.get("inbound_id") or 0),
+                ).to_dict()
+                applied.append("panel")
+            if isinstance(payload.get("admins"), dict):
+                admins: dict[str, Any] = {}
+                for k, v in payload["admins"].items():
+                    role = str(v.get("role") if isinstance(v, dict) else v).strip().lower()
+                    if role in {"full", "stats"}:
+                        admins[str(k)] = {"role": role}
+                self._data["admins"] = admins
+                applied.append("admins")
+            if isinstance(payload.get("health"), dict):
+                h = payload["health"]
+                self._data["health"] = {
+                    "enabled": bool(h.get("enabled", True)),
+                    "times": str(h.get("times") or "09:00").strip() or "09:00",
+                    "chat_id": str(h.get("chat_id") or "").strip(),
+                }
+                applied.append("health")
+            if applied:
+                self._data["version"] = max(int(self._data.get("version") or 0), 3)
+                self._save_sync()
+        return applied
 
     def format_owner_card(self, owner: OwnerInfo, *, lang: str = "fa") -> str:
         fa = (lang or "").startswith("fa")
