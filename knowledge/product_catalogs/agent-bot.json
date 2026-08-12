@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "catalog_id": "blackfox-agent-bot",
+  "product_id": "agent-bot",
+  "enabled": true,
+  "menu_order": 3,
+  "menu_emoji": "🤖",
+  "title": {
+    "fa": "Telegram Agent Bot",
+    "en": "Telegram Agent Bot",
+    "ru": "Telegram Agent Bot",
+    "zh": "Telegram Agent Bot"
+  },
+  "short_summary": {
+    "fa": "دستیار پشتیبانی Black Fox در تلگرام با Ask AI چهارزبانه.",
+    "en": "Black Fox Telegram support assistant with multilingual Ask AI.",
+    "ru": "Telegram-помощник Black Fox с многоязычным Ask AI.",
+    "zh": "Black Fox 的 Telegram 支持助手，支持多语言 Ask AI。"
+  },
+  "long_summary": {
+    "fa": "ربات @BlackFox_Agent_Bot راهنمای محصول است: Installer، Config Builder، لایسنس و Deploy. کلاینت VPN یا پنل ثنایی نیست.",
+    "en": "@BlackFox_Agent_Bot is the product guide for Installer, Config Builder, licenses, 3X-UI, WireGuard, and Deploy flows. It offers private Ask AI, group/topic replies, multilingual education posts, nightly free config delivery, and an admin Agent control plane. It is not a VPN client or a 3X-UI panel.",
+    "ru": "@BlackFox_Agent_Bot — гид по продуктам: Installer, Config Builder, лицензии, 3X-UI, WireGuard и Deploy. Есть Ask AI в личке, ответы в группе/топиках, обучающие посты, ночной бесплатный конфиг и админ-панель агентов. Это не VPN-клиент и не панель 3X-UI.",
+    "zh": "@BlackFox_Agent_Bot 是产品导览助手：Installer、Config Builder、许可证、3X-UI、WireGuard 与 Deploy。支持私聊 Ask AI、群组/话题回复、多语言教学帖、夜间免费配置，以及管理员 Agent 控制台。它不是 VPN 客户端，也不是 3X-UI 面板。"
+  },
+  "platforms": ["telegram"],
+  "versions": {
+    "bot": "live"
+  },
+  "features": [
+    {
+      "id": "ask_ai",
+      "title": {
+        "fa": "پرسش Ask AI",
+        "en": "Ask AI",
+        "ru": "Ask AI",
+        "zh": "Ask AI"
+      },
+      "summary": {
+        "fa": "هر سؤال محصول را آزاد بپرسید؛ پاسخ کوتاه و چهارزبانه می‌گیرید.",
+        "en": "Free-form questions about Black Fox products in fa/en/ru/zh.",
+        "ru": "Свободные вопросы о продуктах Black Fox на fa/en/ru/zh.",
+        "zh": "用 fa/en/ru/zh 自由提问 Black Fox 产品。"
+      }
+    },
+    {
+      "id": "product_catalogs",
+      "title": {
+        "fa": "کاتالوگ محصولات",
+        "en": "Product catalogs",
+        "ru": "Каталоги продуктов",
+        "zh": "产品目录"
+      },
+      "summary": {
+        "fa": "ربات از کاتالوگ JSON محصولات برای پاسخ دقیق‌تر استفاده می‌کند.",
+        "en": "Reads product JSON catalogs for more accurate answers.",
+        "ru": "Читает JSON-каталоги продуктов для точных ответов.",
+        "zh": "读取产品 JSON 目录以给出更准确回答。"
+      }
+    },
+    {
+      "id": "group_topics",
+      "title": {
+        "fa": "گروه و تاپیک‌ها",
+        "en": "Group and topics",
+        "ru": "Группа и топики",
+        "zh": "群组与话题"
+      },
+      "summary": {
+        "fa": "با منشن یا ریپلای در گروه جواب می‌دهد و در تاپیک پست می‌گذارد.",
+        "en": "Reply on mention/reply and multilingual topic posts.",
+        "ru": "Ответы по упоминанию/ответу и посты в топиках.",
+        "zh": "提及/回复时作答，并在话题中发多语言帖。"
+      }
+    },
+    {
+      "id": "nightly_config",
+      "title": {
+        "fa": "کانفیگ شبانه",
+        "en": "Nightly config",
+        "ru": "Ночной конфиг",
+        "zh": "夜间配置"
+      },
+      "summary": {
+        "fa": "هر شب یک کانفیگ رایگان زمان‌بندی‌شده برای کانال/پشتیبانی ساخته می‌شود.",
+        "en": "Scheduled free config creation for support/channel.",
+        "ru": "Плановое создание бесплатного конфига для поддержки/канала.",
+        "zh": "定时为支持/频道创建免费配置。"
+      }
+    }
+  ],
+  "does_not": {
+    "fa": ["اجرای SSH روی سرور مشتری", "Full Deploy از داخل تلگرام", "فروش قیمت ساختگی"],
+    "en": ["SSH onto customer servers", "Full Deploy from Telegram", "Invented prices"],
+    "ru": ["SSH на серверы клиента", "Full Deploy из Telegram", "Выдуманные цены"],
+    "zh": ["通过 SSH 操作客户服务器", "在 Telegram 内做 Full Deploy", "编造价格"]
+  },
+  "relations": {
+    "guides": ["vpn-installer", "config-builder"],
+    "support_human": "@HiBlackFoxVpn"
+  },
+  "support": {
+    "site": "https://foxnext.net",
+    "handle": "@HiBlackFoxVpn",
+    "bot": "@BlackFox_Agent_Bot",
+    "group": "@Black_Fox_Group",
+    "channel": "@blackFoxVPNN"
+  },
+  "keywords": [
+    "bot",
+    "ربات",
+    "telegram",
+    "ask ai",
+    "blackfox agent",
+    "پشتیبانی",
+    "support"
+  ],
+  "media": [
+    {
+      "role": "hero",
+      "slot": "bot-hero",
+      "path": "",
+      "local_folder": "media/catalogs/agent-bot",
+      "note": "placeholder — photo later"
+    },
+    {
+      "role": "screenshot",
+      "slot": "bot-menu",
+      "path": "",
+      "local_folder": "media/catalogs/agent-bot",
+      "note": "placeholder — photo later"
+    }
+  ],
+  "updated_at": "2026-08-12"
+}

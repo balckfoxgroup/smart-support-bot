@@ -1,0 +1,963 @@
+"""Admin Control Center reply keyboards — FA / EN with dedicated emojis."""
+
+from __future__ import annotations
+
+from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
+
+Lang = str
+
+# action → {fa, en} — every button has its own emoji
+_LABELS: dict[str, dict[Lang, str]] = {
+    "change_agent_api": {
+        "fa": "📝 ثبت و ویرایش ایجنت و API",
+        "en": "📝 Register & Edit Agent & API",
+    },
+    # Keep old labels resolvable so existing keyboards still work until refresh
+    "change_agent_api_legacy": {
+        "fa": "🔧 تغییر ایجنت و API",
+        "en": "🔧 Change Agent & API",
+    },
+    "settings_hub": {
+        "fa": "⚙️ تنظیمات",
+        "en": "⚙️ Settings",
+    },
+    "owner_info": {
+        "fa": "📋 اطلاعات اصلی",
+        "en": "📋 Main Info",
+    },
+    "creator_contact": {
+        "fa": "🛠 تماس با سازنده",
+        "en": "🛠 Contact Creator",
+    },
+    "bot_config_chat": {
+        "fa": "💬 گفتگو با ربات",
+        "en": "💬 Chat With Bot",
+    },
+    "build_catalogs": {
+        "fa": "📦 ساخت کاتالوگ از پوشه",
+        "en": "📦 Build Catalogs From Folder",
+    },
+    "catalog_src_site": {
+        "fa": "🌐 منبع سایت",
+        "en": "🌐 Site source",
+    },
+    "catalog_src_channel": {
+        "fa": "📢 منبع کانال",
+        "en": "📢 Channel source",
+    },
+    "catalog_src_group": {
+        "fa": "👥 منبع گروه",
+        "en": "👥 Group source",
+    },
+    "catalog_run": {
+        "fa": "✅ ساخت کاتالوگ",
+        "en": "✅ Build Catalog",
+    },
+    "settings_messages": {
+        "fa": "📨 ثبت و ویرایش پیام‌های پیش‌فرض",
+        "en": "📨 Register & Edit Default Messages",
+    },
+    "settings_panel": {
+        "fa": "🖥 ثبت پنل و API",
+        "en": "🖥 Register Panel & API",
+    },
+    "settings_back": {
+        "fa": "⬅️ بازگشت به تنظیمات",
+        "en": "⬅️ Back to Settings",
+    },
+    "msg_channel": {
+        "fa": "📢 ثبت و ویرایش کانال",
+        "en": "📢 Register & Edit Channel",
+    },
+    "msg_group": {
+        "fa": "👥 ثبت و ویرایش گروه",
+        "en": "👥 Register & Edit Group",
+    },
+    "msg_support": {
+        "fa": "👤 ثبت و ویرایش اکانت",
+        "en": "👤 Register & Edit Account",
+    },
+    "msg_account": {
+        "fa": "👤 ثبت و ویرایش اکانت",
+        "en": "👤 Register & Edit Account",
+    },
+    "msg_test": {
+        "fa": "🧪 ثبت و ویرایش اکانت تست",
+        "en": "🧪 Register & Edit Test Account",
+    },
+    "slot_1": {
+        "fa": "1️⃣ اسلات ۱",
+        "en": "1️⃣ Slot 1",
+    },
+    "slot_2": {
+        "fa": "2️⃣ اسلات ۲",
+        "en": "2️⃣ Slot 2",
+    },
+    "slot_3": {
+        "fa": "3️⃣ اسلات ۳",
+        "en": "3️⃣ Slot 3",
+    },
+    "edit_dest": {
+        "fa": "🎯 اکانت مقصد",
+        "en": "🎯 Destination Account",
+    },
+    "edit_dest_legacy": {
+        "fa": "🎯 ویرایش مقصد",
+        "en": "🎯 Edit Destination",
+    },
+    "edit_template": {
+        "fa": "📝 متن پیام",
+        "en": "📝 Message Text",
+    },
+    "edit_template_legacy": {
+        "fa": "📝 ویرایش متن پیام",
+        "en": "📝 Edit Message Text",
+    },
+    "edit_schedule": {
+        "fa": "⏰ زمان ارسال",
+        "en": "⏰ Schedule",
+    },
+    "edit_schedule_legacy": {
+        "fa": "⏰ ویرایش زمان ارسال",
+        "en": "⏰ Edit Schedule",
+    },
+    "edit_rules": {
+        "fa": "📜 پرامپت قوانین و چت با AI",
+        "en": "📜 Rules Prompt & AI Chat",
+    },
+    "edit_rules_legacy": {
+        "fa": "📜 ویرایش پرامپت قوانین",
+        "en": "📜 Edit Rules Prompt",
+    },
+    "edit_slot_kind": {
+        "fa": "🏷 نوع اسلات (خبر/ثابت/کانفیگ)",
+        "en": "🏷 Slot Kind (news/static/config)",
+    },
+    "owner_site": {
+        "fa": "🌐 آدرس سایت",
+        "en": "🌐 Site URL",
+    },
+    "owner_channel": {
+        "fa": "📢 آدرس کانال",
+        "en": "📢 Channel",
+    },
+    "owner_group": {
+        "fa": "👥 آدرس گروه",
+        "en": "👥 Group",
+    },
+    "owner_support": {
+        "fa": "🛟 اکانت پشتیبانی مالک",
+        "en": "🛟 Owner Support Account",
+    },
+    "owner_bot_name": {
+        "fa": "🏷 نام ربات",
+        "en": "🏷 Bot Name",
+    },
+    "nav_back": {
+        "fa": "↩️ بازگشت",
+        "en": "↩️ Back",
+    },
+    "edit_panel_url": {
+        "fa": "🌐 آدرس پنل",
+        "en": "🌐 Panel URL",
+    },
+    "edit_panel_url_legacy": {
+        "fa": "🌐 ویرایش آدرس پنل",
+        "en": "🌐 Edit Panel URL",
+    },
+    "edit_panel_token": {
+        "fa": "🔑 API پنل",
+        "en": "🔑 Panel API",
+    },
+    "edit_panel_token_legacy": {
+        "fa": "🔑 ویرایش API پنل",
+        "en": "🔑 Edit Panel API",
+    },
+    "edit_panel_port": {
+        "fa": "🔌 پورت کانفیگ",
+        "en": "🔌 Config Port",
+    },
+    "edit_panel_port_legacy": {
+        "fa": "🔌 ویرایش پورت کانفیگ",
+        "en": "🔌 Edit Config Port",
+    },
+    "edit_panel_inbound": {
+        "fa": "📥 Inbound ID",
+        "en": "📥 Inbound ID",
+    },
+    "edit_panel_inbound_legacy": {
+        "fa": "📥 ویرایش Inbound ID",
+        "en": "📥 Edit Inbound ID",
+    },
+    "stats_report": {
+        "fa": "📈 گزارش عملکرد",
+        "en": "📈 Performance Report",
+    },
+    "stats_back": {
+        "fa": "🏠 بازگشت به منو",
+        "en": "🏠 Back to Menu",
+    },
+    "add_agent": {
+        "fa": "➕ افزودن ایجنت جدید",
+        "en": "➕ Add New Agent",
+    },
+    "list_agents": {
+        "fa": "📋 فهرست ایجنت‌ها",
+        "en": "📋 List Agents",
+    },
+    "set_active": {
+        "fa": "✅ تنظیم به‌عنوان فعال",
+        "en": "✅ Set as Active",
+    },
+    "test_agent": {
+        "fa": "🧪 تست ایجنت",
+        "en": "🧪 Test Agent",
+    },
+    "config_agent": {
+        "fa": "⚙️ تنظیمات ایجنت",
+        "en": "⚙️ Agent Configuration",
+    },
+    "support_agent": {
+        "fa": "🛟 ایجنت پشتیبانی",
+        "en": "🛟 Support Agent",
+    },
+    "api_mgmt": {
+        "fa": "🔌 مدیریت API",
+        "en": "🔌 API Management",
+    },
+    "chat_agent": {
+        "fa": "💬 گفتگو با ایجنت",
+        "en": "💬 Chat with Agent",
+    },
+    "failover": {
+        "fa": "🔁 وضعیت جایگزینی خودکار",
+        "en": "🔁 Failover Status",
+    },
+    "return_primary": {
+        "fa": "↩️ بازگشت به ایجنت اصلی",
+        "en": "↩️ Return to Primary",
+    },
+    "audit_log": {
+        "fa": "📜 گزارش تغییرات",
+        "en": "📜 Audit Log",
+    },
+    "token_monitor": {
+        "fa": "💎 پایش اعتبار و توکن",
+        "en": "💎 Token / Credit Monitor",
+    },
+    "control_home": {
+        "fa": "🛠 خانه کنترل",
+        "en": "🛠 Control Home",
+    },
+    "cancel": {
+        "fa": "❌ انصراف",
+        "en": "❌ Cancel",
+    },
+    "skip": {
+        "fa": "⏭ رد کردن",
+        "en": "⏭ Skip",
+    },
+    "clear_chat": {
+        "fa": "🧹 پاک‌کردن مکالمه",
+        "en": "🧹 Clear Conversation",
+    },
+    "end_chat": {
+        "fa": "🚪 پایان گفتگو با ایجنت",
+        "en": "🚪 End Chat with Agent",
+    },
+    "upload_hint": {
+        "fa": "📎 ارسال فایل / تصویر / سند",
+        "en": "📎 Send File / Image / Document",
+    },
+    "api_add": {
+        "fa": "➕ افزودن API",
+        "en": "➕ Add API",
+    },
+    "api_list": {
+        "fa": "📋 فهرست APIها",
+        "en": "📋 List APIs",
+    },
+    "api_test": {
+        "fa": "🧪 تست API",
+        "en": "🧪 Test API",
+    },
+    "api_delete": {
+        "fa": "🗑 حذف API",
+        "en": "🗑 Delete API",
+    },
+    "role_primary": {
+        "fa": "👑 نقش اصلی (primary)",
+        "en": "👑 Role: primary",
+    },
+    "role_secondary": {
+        "fa": "🥈 نقش دوم (secondary)",
+        "en": "🥈 Role: secondary",
+    },
+    "role_backup": {
+        "fa": "🛟 نقش پشتیبان (backup)",
+        "en": "🛟 Role: backup",
+    },
+    "role_support": {
+        "fa": "🎧 نقش پشتیبانی (support)",
+        "en": "🎧 Role: support",
+    },
+}
+
+_UI_MSGS: dict[str, dict[Lang, str]] = {
+    "stats_hub": {
+        "fa": "📊 آمار ربات\n\nگزارش مدیریتی عملکرد هوش مصنوعی.",
+        "en": "📊 Bot Stats\n\nManagerial AI performance report.",
+    },
+    "settings_hub": {
+        "fa": (
+            "⚙️ تنظیمات\n\n"
+            "• 📋 اطلاعات اصلی (سایت/کانال/گروه/پشتیبانی)\n"
+            "• 💬 گفتگو با ربات (کل تنظیمات)\n"
+            "• 📦 ساخت کاتالوگ از پوشه\n"
+            "• 📝 ایجنت و API / 📨 پیام‌ها / 🖥 پنل\n"
+            "• 🛠 تماس با سازنده (قفل)"
+        ),
+        "en": (
+            "⚙️ Settings\n\n"
+            "• 📋 Main Info (site/channel/group/support)\n"
+            "• 💬 Chat With Bot (whole bot)\n"
+            "• 📦 Build catalogs from folder\n"
+            "• 📝 Agents & API / 📨 Messages / 🖥 Panel\n"
+            "• 🛠 Contact Creator (locked)"
+        ),
+    },
+    "messages_hub": {
+        "fa": (
+            "📨 پیام‌های پیش‌فرض\n\n"
+            "• کانال: مقصد کانال\n"
+            "• گروه: مقصد گروه\n"
+            "• اکانت: اکانت کاربر معمولی\n"
+            "• اکانت تست: خروجی‌های مدیریتی"
+        ),
+        "en": (
+            "📨 Default Messages\n\n"
+            "• Channel destination\n"
+            "• Group destination\n"
+            "• Account: normal user account\n"
+            "• Test account: admin outputs"
+        ),
+    },
+    "ask_dest_channel": {
+        "fa": (
+            "🎯 آدرس کانال را بفرستید (مثل @mychannel).\n"
+            "⚠️ فقط کانال قبول می‌شود.\n"
+            "ربات باید در کانال به‌عنوان مدیر عضو باشد."
+        ),
+        "en": (
+            "🎯 Send channel (@mychannel).\n"
+            "⚠️ Only a channel is accepted.\n"
+            "Bot must be an admin in that channel."
+        ),
+    },
+    "ask_dest_group": {
+        "fa": (
+            "🎯 آدرس گروه را بفرستید (مثل @mygroup یا chat id).\n"
+            "⚠️ فقط گروه/سوپرگروه قبول می‌شود.\n"
+            "ربات باید در گروه به‌عنوان مدیر عضو باشد."
+        ),
+        "en": (
+            "🎯 Send group (@mygroup or chat id).\n"
+            "⚠️ Only a group/supergroup is accepted.\n"
+            "Bot must be an admin in that group."
+        ),
+    },
+    "ask_dest_account": {
+        "fa": (
+            "🎯 آدرس اکانت کاربر معمولی را بفرستید (مثل @username یا chat id عددی).\n"
+            "این بخش برای اکانت شخصی است؛ کانال و گروه بخش جدا دارند."
+        ),
+        "en": (
+            "🎯 Send a normal user account (@username or numeric chat id).\n"
+            "This section is for private accounts; channel/group have their own sections."
+        ),
+    },
+    "dest_type_mismatch": {
+        "fa": "❌ نوع مقصد با این بخش جور نیست. {detail}",
+        "en": "❌ Destination type does not match this section. {detail}",
+    },
+    "dest_need_admin": {
+        "fa": "⚠️ ربات را در کانال/گروه ادمین کنید و دوباره امتحان کنید.",
+        "en": "⚠️ Make the bot an admin in the channel/group and try again.",
+    },
+    "catalog_wizard_intro": {
+        "fa": (
+            "📦 ساخت کاتالوگ\n\n"
+            "۱) منابع کمکی را انتخاب کنید (اختیاری)\n"
+            "۲) مسیر پوشه روی سرور را بفرستید، یا فایل ZIP/عکس/متن آپلود کنید\n"
+            "۳) ساخت را بزنید"
+        ),
+        "en": (
+            "📦 Catalog build\n\n"
+            "1) Pick optional sources\n"
+            "2) Send a folder path on the server, or upload ZIP/photos/text\n"
+            "3) Tap Build"
+        ),
+    },
+    "catalog_src_site": {
+        "fa": "🌐 منبع سایت",
+        "en": "🌐 Site source",
+    },
+    "catalog_src_channel": {
+        "fa": "📢 منبع کانال",
+        "en": "📢 Channel source",
+    },
+    "catalog_src_group": {
+        "fa": "👥 منبع گروه",
+        "en": "👥 Group source",
+    },
+    "catalog_ask_path": {
+        "fa": "📁 مسیر پوشه روی سرور را بفرستید، یا فایل ZIP / متن / عکس آپلود کنید.",
+        "en": "📁 Send a server folder path, or upload ZIP / text / photos.",
+    },
+    "catalog_run": {
+        "fa": "✅ ساخت کاتالوگ",
+        "en": "✅ Build Catalog",
+    },
+    "catalog_src_toggled": {
+        "fa": "منبع‌ها: سایت={site} | کانال={channel} | گروه={group}",
+        "en": "Sources: site={site} | channel={channel} | group={group}",
+    },
+    "owner_hub": {
+        "fa": "📋 اطلاعات اصلی — یکی را برای ویرایش انتخاب کنید.",
+        "en": "📋 Main Info — pick a field to edit.",
+    },
+    "creator_locked": {
+        "fa": "🔒 تماس با سازنده قابل ویرایش از داخل ربات نیست.",
+        "en": "🔒 Contact Creator cannot be edited inside the bot.",
+    },
+    "bot_chat_start": {
+        "fa": (
+            "💬 گفتگو با ربات برای کل تنظیمات فعال شد.\n"
+            "درخواست خود را بنویسید. تماس با سازنده قابل تغییر نیست.\n"
+            "برای پایان: دکمه بازگشت به تنظیمات."
+        ),
+        "en": (
+            "💬 Bot-wide config chat is on.\n"
+            "Describe what to change. Creator contact is locked.\n"
+            "To exit: Back to Settings."
+        ),
+    },
+    "scoped_rules_start": {
+        "fa": (
+            "📜 پرامپت قوانین و چت با AI (فقط همین اسلات).\n"
+            "خواسته‌تان را بنویسید تا قوانین همین بخش به‌روز شود."
+        ),
+        "en": (
+            "📜 Rules prompt & AI chat (this slot only).\n"
+            "Describe the change; only this section's rules will update."
+        ),
+    },
+    "ask_slot_kind": {
+        "fa": "🏷 نوع اسلات را بفرستید: news یا static یا config",
+        "en": "🏷 Send slot kind: news or static or config",
+    },
+    "ask_owner_site": {
+        "fa": "🌐 آدرس سایت را بفرستید (مثل https://example.com):",
+        "en": "🌐 Send site URL:",
+    },
+    "ask_owner_channel": {
+        "fa": "📢 آدرس کانال را بفرستید (مثل @mychannel):",
+        "en": "📢 Send channel (@handle or id):",
+    },
+    "ask_owner_group": {
+        "fa": "👥 آدرس گروه را بفرستید (مثل @mygroup):",
+        "en": "👥 Send group (@handle or id):",
+    },
+    "ask_owner_support": {
+        "fa": "🛟 اکانت پشتیبانی مالک را بفرستید (مثل @support):",
+        "en": "🛟 Send owner support account:",
+    },
+    "ask_owner_bot_name": {
+        "fa": "🏷 نام ربات را بفرستید (همان نام پروفایل تلگرام که کاربر می‌بیند):",
+        "en": "🏷 Send the bot name (Telegram profile name users see):",
+    },
+    "catalog_building": {
+        "fa": "📦 در حال ساخت کاتالوگ از پوشه catalog_inbox …",
+        "en": "📦 Building catalogs from catalog_inbox …",
+    },
+    "catalog_done": {
+        "fa": "✅ کاتالوگ‌ها ساخته شد: {ids}",
+        "en": "✅ Catalogs built: {ids}",
+    },
+    "catalog_empty": {
+        "fa": "پوشه catalog_inbox خالی است. یک پوشه محصول با فایل متن/عکس بسازید.",
+        "en": "catalog_inbox is empty. Add a product folder with text/photos.",
+    },
+    "admin_only": {
+        "fa": "⛔ فقط برای مدیران.",
+        "en": "⛔ Admin only.",
+    },
+    "no_agents": {
+        "fa": "هیچ ایجنتی ثبت نشده است.",
+        "en": "No agents registered.",
+    },
+    "no_apis": {
+        "fa": "هیچ APIای ثبت نشده است.",
+        "en": "No APIs registered.",
+    },
+    "add_agent_start": {
+        "fa": "➕ افزودن ایجنت جدید\n\nگام ۱/۹ — نام ایجنت:",
+        "en": "➕ Add New Agent\n\nStep 1/9 — Agent Name:",
+    },
+    "support_agent_start": {
+        "fa": "🛟 راه‌اندازی ایجنت پشتیبانی\n\nگام ۱/۹ — نام ایجنت:",
+        "en": "🛟 Support Agent setup\n\nStep 1/9 — Agent Name:",
+    },
+    "pick_set_active": {
+        "fa": "✅ ایجنت موردنظر را برای فعال‌سازی انتخاب کنید (ابتدا تست اتصال اجرا می‌شود):",
+        "en": "✅ Select agent to Set as Active (Test Mode runs first):",
+    },
+    "pick_test": {
+        "fa": "🧪 ایجنت موردنظر را برای تست انتخاب کنید:",
+        "en": "🧪 Select agent to Test:",
+    },
+    "pick_config": {
+        "fa": "⚙️ ایجنت موردنظر را برای تنظیمات انتخاب کنید:",
+        "en": "⚙️ Select agent to configure:",
+    },
+    "pick_chat": {
+        "fa": "💬 گفتگو با ایجنت\nایجنت هدف را انتخاب کنید:",
+        "en": "💬 Chat with Agent\nSelect target agent:",
+    },
+    "pick_api_delete": {
+        "fa": "🗑 مورد API را برای حذف انتخاب کنید:",
+        "en": "🗑 Select API to delete:",
+    },
+    "pick_api_test": {
+        "fa": "🧪 مورد API را برای تست انتخاب کنید:",
+        "en": "🧪 Select API to test:",
+    },
+    "api_mgmt_intro": {
+        "fa": "🔌 مدیریت API\n\nافزودن، فهرست، تست یا حذف ارائه‌دهندگان API.",
+        "en": "🔌 API Management\n\nAdd / List / Test / Delete API providers.",
+    },
+    "api_add_name": {
+        "fa": "➕ افزودن API — نام ارائه‌دهنده:",
+        "en": "➕ Add API — Provider Name:",
+    },
+    "chat_cleared": {
+        "fa": "🧹 مکالمه پاک شد.",
+        "en": "🧹 Conversation cleared.",
+    },
+    "not_in_chat": {
+        "fa": "الان در حالت گفتگو با ایجنت نیستید.",
+        "en": "Not in Chat with Agent mode.",
+    },
+    "upload_help": {
+        "fa": (
+            "📎 اکنون فایل، عکس یا سند را ارسال کنید.\n"
+            "قبل از ارسال به ایجنت، نام، نوع و حجم نمایش داده می‌شود."
+        ),
+        "en": (
+            "📎 Send a file / photo / document now.\n"
+            "Name, type, and size will be shown before sending to the Agent."
+        ),
+    },
+    "choose_role": {
+        "fa": "نقش ایجنت را انتخاب کنید:",
+        "en": "Choose Role:",
+    },
+    "cancel_done": {
+        "fa": "❌ لغو شد.",
+        "en": "❌ Cancelled.",
+    },
+    "testing_now": {
+        "fa": "⏳ در حال تست اتصال… لطفاً چند لحظه صبر کنید.",
+        "en": "⏳ Testing connection… please wait.",
+    },
+    "activating_now": {
+        "fa": "⏳ در حال تست و فعال‌سازی ایجنت… لطفاً چند لحظه صبر کنید.",
+        "en": "⏳ Testing and activating agent… please wait.",
+    },
+    "chatting_now": {
+        "fa": "⏳ در حال دریافت پاسخ از ایجنت…",
+        "en": "⏳ Waiting for agent reply…",
+    },
+    "ask_dest": {
+        "fa": "🎯 شناسه یا آدرس مقصد را بفرستید (مثل @channel یا عدد chat id):",
+        "en": "🎯 Send destination (@channel or numeric chat id):",
+    },
+    "ask_template": {
+        "fa": (
+            "📝 متن پیام را کامل بفرستید.\n"
+            "برای کانفیگ شبانه می‌توانید از {config} و {date} استفاده کنید."
+        ),
+        "en": (
+            "📝 Send the full message template.\n"
+            "For nightly config you may use {config} and {date}."
+        ),
+    },
+    "ask_schedule": {
+        "fa": "⏰ زمان ارسال را بفرستید (مثل 21:00 یا 10:00,17:00):",
+        "en": "⏰ Send schedule times (e.g. 21:00 or 10:00,17:00):",
+    },
+    "ask_rules": {
+        "fa": (
+            "📜 پرامپت قوانین و چت با AI — فقط برای همین اسلات.\n"
+            "متن قوانین جدید را بفرستید، یا خواسته‌تان را به زبان ساده بنویسید تا AI قوانین را بسازد."
+        ),
+        "en": (
+            "📜 Rules prompt & AI chat — this slot only.\n"
+            "Send the new rules text, or describe the change in plain language for AI to rewrite rules."
+        ),
+    },
+    "ask_panel_url": {
+        "fa": "🌐 آدرس پنل را بفرستید (مثل https://panel.example.com:2053):",
+        "en": "🌐 Send panel base URL:",
+    },
+    "ask_panel_token": {
+        "fa": "🔑 توکن API پنل را بفرستید (رمزنگاری می‌شود):",
+        "en": "🔑 Send panel API token (stored encrypted):",
+    },
+    "ask_panel_port": {
+        "fa": "🔌 پورت ساخت کانفیگ را بفرستید (مثل 443):",
+        "en": "🔌 Send config port (e.g. 443):",
+    },
+    "ask_panel_inbound": {
+        "fa": "📥 شناسه Inbound را بفرستید (عدد):",
+        "en": "📥 Send inbound ID (number):",
+    },
+    "saved_ok": {
+        "fa": "✅ ذخیره شد.",
+        "en": "✅ Saved.",
+    },
+}
+
+
+def ui_lang(lang: str | None) -> Lang:
+    """Control Center UI is FA/EN; other langs fall back to English."""
+    return "fa" if (lang or "").startswith("fa") else "en"
+
+
+def label(action: str, lang: str | None) -> str:
+    table = _LABELS[action]
+    code = ui_lang(lang)
+    return table.get(code) or table["en"]
+
+
+def msg(key: str, lang: str | None) -> str:
+    table = _UI_MSGS[key]
+    code = ui_lang(lang)
+    return table.get(code) or table["en"]
+
+
+def texts(action: str) -> frozenset[str]:
+    table = _LABELS[action]
+    return frozenset(table.values())
+
+
+def resolve_action(text: str | None) -> str | None:
+    if not text:
+        return None
+    needle = text.strip()
+    for prefix in ("✅ ", "⬜ "):
+        if needle.startswith(prefix):
+            needle = needle[len(prefix) :].strip()
+            break
+    for action, table in _LABELS.items():
+        if needle in table.values():
+            if action.endswith("_legacy"):
+                return action[: -len("_legacy")]
+            if action == "change_agent_api_legacy":
+                return "change_agent_api"
+            if action == "msg_support":
+                return "msg_account"
+            return action
+    return None
+
+
+def all_admin_control_texts() -> frozenset[str]:
+    out: set[str] = set()
+    for table in _LABELS.values():
+        out.update(table.values())
+        # Include toggle-prefixed catalog source labels
+        for v in table.values():
+            out.add("✅ " + v)
+            out.add("⬜ " + v)
+    return frozenset(out)
+
+
+def stats_hub_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=label("stats_report", lang))],
+            [KeyboardButton(text=label("stats_back", lang))],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="Statistics / آمار",
+    )
+
+
+def settings_hub_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=label("owner_info", lang))],
+            [KeyboardButton(text=label("bot_config_chat", lang))],
+            [KeyboardButton(text=label("build_catalogs", lang))],
+            [KeyboardButton(text=label("change_agent_api", lang))],
+            [KeyboardButton(text=label("settings_messages", lang))],
+            [KeyboardButton(text=label("settings_panel", lang))],
+            [KeyboardButton(text=label("creator_contact", lang))],
+            [KeyboardButton(text=label("stats_back", lang))],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="Settings / تنظیمات",
+    )
+
+
+def owner_info_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=label("owner_bot_name", lang))],
+            [KeyboardButton(text=label("owner_site", lang))],
+            [KeyboardButton(text=label("owner_channel", lang))],
+            [KeyboardButton(text=label("owner_group", lang))],
+            [KeyboardButton(text=label("owner_support", lang))],
+            [KeyboardButton(text=label("settings_back", lang))],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def messages_hub_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=label("msg_channel", lang))],
+            [KeyboardButton(text=label("msg_group", lang))],
+            [KeyboardButton(text=label("msg_account", lang))],
+            [KeyboardButton(text=label("msg_test", lang))],
+            [KeyboardButton(text=label("settings_back", lang))],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="Default messages",
+    )
+
+
+def catalog_wizard_keyboard(lang: str | None = "en", *, sources: dict[str, bool] | None = None) -> ReplyKeyboardMarkup:
+    sources = sources or {"site": False, "channel": False, "group": False}
+
+    def mark(on: bool, key: str) -> str:
+        base = label(key, lang)
+        return (("✅ " if on else "⬜ ") + base)
+
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=mark(bool(sources.get("site")), "catalog_src_site"))],
+            [KeyboardButton(text=mark(bool(sources.get("channel")), "catalog_src_channel"))],
+            [KeyboardButton(text=mark(bool(sources.get("group")), "catalog_src_group"))],
+            [KeyboardButton(text=label("catalog_run", lang))],
+            [KeyboardButton(text=label("settings_back", lang))],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def target_edit_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=label("edit_dest", lang))],
+            [
+                KeyboardButton(text=label("slot_1", lang)),
+                KeyboardButton(text=label("slot_2", lang)),
+                KeyboardButton(text=label("slot_3", lang)),
+            ],
+            [KeyboardButton(text=label("nav_back", lang))],
+            [KeyboardButton(text=label("settings_back", lang))],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def slot_edit_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=label("edit_dest", lang))],
+            [KeyboardButton(text=label("edit_template", lang))],
+            [KeyboardButton(text=label("edit_schedule", lang))],
+            [KeyboardButton(text=label("edit_rules", lang))],
+            [KeyboardButton(text=label("edit_slot_kind", lang))],
+            [KeyboardButton(text=label("nav_back", lang))],
+            [KeyboardButton(text=label("settings_back", lang))],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def panel_edit_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=label("edit_panel_url", lang))],
+            [KeyboardButton(text=label("edit_panel_token", lang))],
+            [KeyboardButton(text=label("edit_panel_port", lang))],
+            [KeyboardButton(text=label("edit_panel_inbound", lang))],
+            [KeyboardButton(text=label("settings_back", lang))],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def control_home_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text=label("list_agents", lang)),
+                KeyboardButton(text=label("add_agent", lang)),
+            ],
+            [
+                KeyboardButton(text=label("set_active", lang)),
+                KeyboardButton(text=label("test_agent", lang)),
+            ],
+            [
+                KeyboardButton(text=label("config_agent", lang)),
+                KeyboardButton(text=label("support_agent", lang)),
+            ],
+            [
+                KeyboardButton(text=label("api_mgmt", lang)),
+                KeyboardButton(text=label("chat_agent", lang)),
+            ],
+            [
+                KeyboardButton(text=label("failover", lang)),
+                KeyboardButton(text=label("return_primary", lang)),
+            ],
+            [
+                KeyboardButton(text=label("token_monitor", lang)),
+                KeyboardButton(text=label("audit_log", lang)),
+            ],
+            [
+                KeyboardButton(text=label("settings_back", lang)),
+                KeyboardButton(text=label("stats_back", lang)),
+            ],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="Agent & API",
+    )
+
+
+def cancel_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    """Keyboard for admin value-input steps."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=label("cancel", lang))],
+            [KeyboardButton(text=label("nav_back", lang))],
+            [KeyboardButton(text=label("settings_back", lang))],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def skip_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=label("skip", lang))],
+            [KeyboardButton(text=label("cancel", lang))],
+            [KeyboardButton(text=label("nav_back", lang))],
+            [KeyboardButton(text=label("settings_back", lang))],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def role_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text=label("role_primary", lang)),
+                KeyboardButton(text=label("role_secondary", lang)),
+            ],
+            [
+                KeyboardButton(text=label("role_backup", lang)),
+                KeyboardButton(text=label("role_support", lang)),
+            ],
+            [KeyboardButton(text=label("cancel", lang))],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def agent_pick_keyboard(labels: list[str], lang: str | None = "en") -> ReplyKeyboardMarkup:
+    rows: list[list[KeyboardButton]] = [[KeyboardButton(text=lab)] for lab in labels[:20]]
+    rows.append([KeyboardButton(text=label("control_home", lang))])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=True)
+
+
+def chat_with_agent_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=label("upload_hint", lang))],
+            [
+                KeyboardButton(text=label("clear_chat", lang)),
+                KeyboardButton(text=label("end_chat", lang)),
+            ],
+            [KeyboardButton(text=label("control_home", lang))],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="💬 Message Agent…",
+    )
+
+
+def api_mgmt_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text=label("api_add", lang)),
+                KeyboardButton(text=label("api_list", lang)),
+            ],
+            [
+                KeyboardButton(text=label("api_test", lang)),
+                KeyboardButton(text=label("api_delete", lang)),
+            ],
+            [KeyboardButton(text=label("control_home", lang))],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+# Backward-compatible aliases (English) for any leftover imports
+BTN_CHANGE_AGENT_API = _LABELS["change_agent_api"]["en"]
+BTN_STATS_REPORT = _LABELS["stats_report"]["en"]
+BTN_STATS_BACK = _LABELS["stats_back"]["en"]
+BTN_ADD_AGENT = _LABELS["add_agent"]["en"]
+BTN_LIST_AGENTS = _LABELS["list_agents"]["en"]
+BTN_SET_ACTIVE = _LABELS["set_active"]["en"]
+BTN_TEST_AGENT = _LABELS["test_agent"]["en"]
+BTN_CONFIG_AGENT = _LABELS["config_agent"]["en"]
+BTN_SUPPORT_AGENT = _LABELS["support_agent"]["en"]
+BTN_API_MGMT = _LABELS["api_mgmt"]["en"]
+BTN_CHAT_AGENT = _LABELS["chat_agent"]["en"]
+BTN_FAILOVER = _LABELS["failover"]["en"]
+BTN_RETURN_PRIMARY = _LABELS["return_primary"]["en"]
+BTN_AUDIT_LOG = _LABELS["audit_log"]["en"]
+BTN_TOKEN_MONITOR = _LABELS["token_monitor"]["en"]
+BTN_CONTROL_HOME = _LABELS["control_home"]["en"]
+BTN_CANCEL = _LABELS["cancel"]["en"]
+BTN_SKIP = _LABELS["skip"]["en"]
+BTN_CLEAR_CHAT = _LABELS["clear_chat"]["en"]
+BTN_END_CHAT = _LABELS["end_chat"]["en"]
+BTN_UPLOAD_HINT = _LABELS["upload_hint"]["en"]
+BTN_API_ADD = _LABELS["api_add"]["en"]
+BTN_API_LIST = _LABELS["api_list"]["en"]
+BTN_API_TEST = _LABELS["api_test"]["en"]
+BTN_API_DELETE = _LABELS["api_delete"]["en"]
+BTN_ROLE_PRIMARY = _LABELS["role_primary"]["en"]
+BTN_ROLE_SECONDARY = _LABELS["role_secondary"]["en"]
+BTN_ROLE_BACKUP = _LABELS["role_backup"]["en"]
+BTN_ROLE_SUPPORT = _LABELS["role_support"]["en"]

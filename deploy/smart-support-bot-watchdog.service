@@ -1,0 +1,17 @@
+[Unit]
+Description=Smart Support Bot safe-change watchdog (backup / confirm / auto-restore)
+After=network-online.target smart-support-bot.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/smart-support-bot
+EnvironmentFile=/opt/smart-support-bot/.env
+ExecStart=/opt/smart-support-bot/.venv/bin/python -m src.safety.watchdog_main
+Restart=always
+RestartSec=3
+NoNewPrivileges=false
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

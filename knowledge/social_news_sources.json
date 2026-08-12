@@ -1,0 +1,38 @@
+[
+  {"kind": "telegram", "name": "BBC فارسی", "url": "https://t.me/s/BBCPersian"},
+  {"kind": "telegram", "name": "ایران اینترنشنال", "url": "https://t.me/s/iranintltv"},
+  {"kind": "telegram", "name": "منوتو", "url": "https://t.me/s/Manototv"},
+  {"kind": "telegram", "name": "صدای آمریکا فارسی", "url": "https://t.me/s/FarsiVOA"},
+  {"kind": "telegram", "name": "دیجیاتو", "url": "https://t.me/s/Digiato"},
+  {"kind": "telegram", "name": "زومیت", "url": "https://t.me/s/theZoomit"},
+  {"kind": "telegram", "name": "پیوست", "url": "https://t.me/s/peivast"},
+  {"kind": "telegram", "name": "رادیو فردا", "url": "https://t.me/s/radiofarda"},
+  {"kind": "telegram", "name": "دویچه‌وله فارسی", "url": "https://t.me/s/dw_Farsi"},
+  {"kind": "telegram", "name": "یورونیوز فارسی", "url": "https://t.me/s/euronewspe"},
+  {"kind": "telegram", "name": "گزارش‌های اینترنت ایران", "url": "https://t.me/s/IRVIVPN"},
+  {"kind": "telegram", "name": "اخبار فیلترینگ", "url": "https://t.me/s/filtereshekan"},
+  {"kind": "reddit", "name": "Reddit r/iran", "url": "https://www.reddit.com/r/iran/new.json?limit=40"},
+  {"kind": "reddit", "name": "Reddit r/NewIran", "url": "https://www.reddit.com/r/NewIran/new.json?limit=40"},
+  {"kind": "hn", "name": "HN (Iran internet)", "url": "https://hn.algolia.com/api/v1/search?tags=story&query=Iran%20internet%20censorship"},
+  {"kind": "hn", "name": "HN (Iran filtering)", "url": "https://hn.algolia.com/api/v1/search?tags=story&query=Iran%20filtering"},
+  {
+    "kind": "rss",
+    "name": "Zoomit",
+    "url": "https://www.zoomit.ir/feed/"
+  },
+  {
+    "kind": "rss",
+    "name": "Digiato",
+    "url": "https://digiato.com/feed"
+  },
+  {
+    "kind": "rss",
+    "name": "ISNA Science",
+    "url": "https://www.isna.ir/rss/tp/24"
+  },
+  {
+    "kind": "rss",
+    "name": "IRNA IT",
+    "url": "https://www.irna.ir/rss/tp/14"
+  }
+]

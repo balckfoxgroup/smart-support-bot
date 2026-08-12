@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "catalog_id": "blackfox-vpn-installer",
+  "product_id": "vpn-installer",
+  "enabled": true,
+  "menu_order": 1,
+  "menu_emoji": "🦊",
+  "title": {
+    "fa": "VPN Installer",
+    "en": "VPN Installer",
+    "ru": "VPN Installer",
+    "zh": "VPN Installer"
+  },
+  "short_summary": {
+    "fa": "نصب‌کننده عملیاتی WireGuard و پنل 3X-UI روی VPS شما (ویندوز + اندروید).",
+    "en": "Operations installer for WireGuard and 3X-UI on your VPS (Windows + Android).",
+    "ru": "Операционный установщик WireGuard и 3X-UI на ваш VPS (Windows + Android).",
+    "zh": "在您的 VPS 上部署 WireGuard 与 3X-UI 的运维安装器（Windows + Android）。"
+  },
+  "long_summary": {
+    "fa": "نصب‌کننده Black Fox Vpn Installer کلاینت مصرف‌کننده «وصل شو و وب‌گردی کن» نیست. با اتصال SSH روی سرور لینوکسی شما Setup Central، Connect SSH، Full Deploy، Exit/Node، Mesh، Domain/CDN و مدهای Basic / Pro / AI Pro را مدیریت می‌کند. حداکثر ۶ Exit و ۶ Node. خرید لایسنس از foxnext.net.",
+    "en": "Black Fox Vpn Installer is not a consumer “connect and browse” VPN. Over SSH on your Linux VPS it runs Setup Central, Connect SSH, Full Deploy, Exit/Node, Mesh, Domain/CDN, and Basic / Pro / AI Pro modes. Max 6 exits and 6 nodes. Buy licenses at foxnext.net.",
+    "ru": "Black Fox Vpn Installer — не бытовой VPN «подключись и серфи». По SSH на вашем Linux VPS: Setup Central, Connect SSH, Full Deploy, Exit/Node, Mesh, Domain/CDN и режимы Basic / Pro / AI Pro. Макс. 6 Exit и 6 Node. Лицензии: foxnext.net.",
+    "zh": "Black Fox Vpn Installer 不是消费级“一键连接上网”VPN。它通过 SSH 在您的 Linux VPS 上执行 Setup Central、Connect SSH、Full Deploy、Exit/Node、Mesh、Domain/CDN，以及 Basic / Pro / AI Pro。最多 6 个 Exit 与 6 个 Node。许可证见 foxnext.net。"
+  },
+  "platforms": ["windows", "android"],
+  "versions": {
+    "windows": "see version.json",
+    "android": "see version.json"
+  },
+  "features": [
+    {
+      "id": "setup_central",
+      "title": {
+        "fa": "Setup Central",
+        "en": "Setup Central",
+        "ru": "Setup Central",
+        "zh": "Setup Central"
+      },
+      "summary": {
+        "fa": "ذخیره سرور مرکزی و آماده‌سازی مسیر Deploy.",
+        "en": "Save the central server and prepare Deploy.",
+        "ru": "Сохранение центрального сервера и подготовка Deploy.",
+        "zh": "保存中心服务器并准备 Deploy。"
+      }
+    },
+    {
+      "id": "connect_ssh",
+      "title": {
+        "fa": "Connect SSH",
+        "en": "Connect SSH",
+        "ru": "Connect SSH",
+        "zh": "Connect SSH"
+      },
+      "summary": {
+        "fa": "تست و برقرار کردن نشست SSH به سرور.",
+        "en": "Test and establish an SSH session to the server.",
+        "ru": "Проверка и установка SSH-сессии к серверу.",
+        "zh": "测试并建立到服务器的 SSH 会话。"
+      }
+    },
+    {
+      "id": "full_deploy",
+      "title": {
+        "fa": "Full Deploy",
+        "en": "Full Deploy",
+        "ru": "Full Deploy",
+        "zh": "Full Deploy"
+      },
+      "summary": {
+        "fa": "نصب خودکار WireGuard + پنل 3X-UI روی سرور مرکزی.",
+        "en": "Automated WireGuard + 3X-UI install on the central server.",
+        "ru": "Автоустановка WireGuard + 3X-UI на центральном сервере.",
+        "zh": "在中心服务器上自动安装 WireGuard + 3X-UI。"
+      }
+    },
+    {
+      "id": "modes",
+      "title": {
+        "fa": "Basic / Pro / AI Pro",
+        "en": "Basic / Pro / AI Pro",
+        "ru": "Basic / Pro / AI Pro",
+        "zh": "Basic / Pro / AI Pro"
+      },
+      "summary": {
+        "fa": "سه مد کاری؛ Pro و AI Pro لایسنس جدا هستند.",
+        "en": "Three working modes; Pro and AI Pro are separate licenses.",
+        "ru": "Три режима; Pro и AI Pro — разные лицензии.",
+        "zh": "三种工作模式；Pro 与 AI Pro 为不同许可证。"
+      }
+    }
+  ],
+  "does_not": {
+    "fa": ["VPN مصرف‌کننده یک‌کلیکه", "فورک UI پنل ثنایی"],
+    "en": ["One-click consumer browse VPN", "Fork of the Sanaei panel UI"],
+    "ru": ["Бытовой VPN в один клик", "Форк UI панели Sanaei"],
+    "zh": ["一键消费级上网 VPN", "Sanaei 面板 UI 分支"]
+  },
+  "relations": {
+    "sibling": "config-builder",
+    "guided_by": "agent-bot"
+  },
+  "support": {
+    "site": "https://foxnext.net",
+    "handle": "@HiBlackFoxVpn",
+    "bot": "@BlackFox_Agent_Bot"
+  },
+  "keywords": [
+    "installer",
+    "نصب‌کننده",
+    "full deploy",
+    "ssh",
+    "wireguard",
+    "3x-ui",
+    "mesh",
+    "exit server"
+  ],
+  "media": [
+    {
+      "role": "hero",
+      "slot": "installer-hero",
+      "path": "",
+      "local_folder": "media/catalogs/vpn-installer",
+      "note": "placeholder — photo later"
+    },
+    {
+      "role": "screenshot",
+      "slot": "installer-dashboard",
+      "path": "",
+      "local_folder": "media/catalogs/vpn-installer",
+      "note": "placeholder — photo later"
+    }
+  ],
+  "updated_at": "2026-08-12"
+}
