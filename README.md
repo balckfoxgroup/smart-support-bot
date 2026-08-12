@@ -134,7 +134,7 @@ smart-support-bot/
 
 ### License / family
 
-Part of the **Black Fox** open-source family.  
+Part of the **Black Fox**  family.  
 More projects: https://github.com/balckfoxgroup?tab=repositories
 
 ---
@@ -253,7 +253,7 @@ journalctl -u smart-support-bot.service -f
 
 ### خانواده Black Fox
 
-این پروژه عضو خانواده متن‌باز **Black Fox** است.  
+این پروژه عضو خانواده **Black Fox** است.  
 پروژه‌های بیشتر: https://github.com/balckfoxgroup?tab=repositories
 
 از همراهی و Star شما سپاسگزاریم.
