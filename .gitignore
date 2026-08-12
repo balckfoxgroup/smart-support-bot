@@ -10,6 +10,8 @@ venv/
 data/*.json
 data/.runtime/
 *.log
+*.session
+media/group_raw/*.session
 
 # Editor / OS
 .DS_Store
