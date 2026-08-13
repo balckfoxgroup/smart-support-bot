@@ -115,7 +115,7 @@ class MessageTarget:
             slots = _default_slots()
             slots[0] = MessageSlot(
                 index=0,
-                kind="config" if key == "channel" else ("news" if key == "support" else "static"),
+            kind="config" if key == "channel" else "static",
                 chat_id=str(raw.get("chat_id") or ""),
                 message_template=str(raw.get("message_template") or ""),
                 schedule_times=str(raw.get("schedule_times") or ""),
@@ -239,6 +239,9 @@ class BotSettingsStore:
                     {"enabled": True, "times": "09:00", "chat_id": ""},
                 )
                 self._data.setdefault("admin_sessions", {})
+                # One-time structural migrate for older installs
+                if int(self._data.get("version") or 0) < 4:
+                    self.migrate_news_to_channel()
         except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
             logger.warning("bot_settings.json unreadable (%s); starting fresh", exc)
 
@@ -258,13 +261,21 @@ class BotSettingsStore:
             hhmm = settings.nightly_iran_time.strftime("%H:%M")
             channel = MessageTarget(
                 key="channel",
-                chat_id=settings.nightly_support_chat_id,
+                chat_id=settings.social_news_chat_id or "@blackFoxVPNN",
+                enabled=True,
+            )
+            channel.slots[0] = MessageSlot(
+                index=0,
+                kind="news",
+                chat_id=settings.social_news_chat_id or "@blackFoxVPNN",
+                schedule_times=settings.social_news_times or "10:00,17:00",
+                rules_prompt=DEFAULT_SOCIAL_RULES,
                 enabled=True,
             )
             channel.slots[2] = MessageSlot(
                 index=2,
                 kind="config",
-                chat_id=settings.nightly_support_chat_id,
+                chat_id=settings.social_news_chat_id or "@blackFoxVPNN",
                 message_template=DEFAULT_NIGHTLY_TEMPLATE,
                 schedule_times=hhmm,
                 rules_prompt="پیام کانفیگ رایگان زمان‌بندی‌شده برای کانال.",
@@ -279,10 +290,10 @@ class BotSettingsStore:
                 index=0,
                 kind="static",
                 chat_id="",
-                schedule_times="09:00",
+                schedule_times="",
                 message_template="پیام زمان‌بندی‌شده برای کاربر.",
                 rules_prompt="فقط پیام کوتاه و مودبانه برای اکانت کاربر بفرست.",
-                enabled=True,
+                enabled=False,
             )
             support.slots[1] = MessageSlot(index=1, kind="static", enabled=False)
             support.slots[2] = MessageSlot(index=2, kind="static", enabled=False)
@@ -319,7 +330,118 @@ class BotSettingsStore:
             seeded = True
         if seeded:
             self._save_sync()
+        # Always migrate legacy news-on-account → channel (idempotent).
+        if self.migrate_news_to_channel():
+            seeded = True
         return seeded
+
+    def migrate_news_to_channel(self) -> bool:
+        """Move news slots/rules from Account(support) into Channel; keep account static-only."""
+        targets = self._data.setdefault("targets", {})
+        changed = False
+
+        channel = MessageTarget.from_dict(
+            "channel",
+            targets.get("channel") if isinstance(targets.get("channel"), dict) else {},
+        )
+        support = MessageTarget.from_dict(
+            "support",
+            targets.get("support") if isinstance(targets.get("support"), dict) else {},
+        )
+        owner = OwnerInfo.from_dict(self._data.get("owner"))
+
+        def _looks_like_news(slot: MessageSlot) -> bool:
+            if slot.kind == "news":
+                return True
+            rules = slot.rules_prompt or ""
+            low = rules.lower()
+            return (
+                "خبر" in rules
+                or "news" in low
+                or "تحلیلگر اخبار" in rules
+                or ("iran" in low and "vpn" in low)
+                or "اینترنت ایران" in rules
+            )
+
+        # Collect news material from support (even if kind was wrongly left as static)
+        news_from_support: MessageSlot | None = None
+        for s in support.slots:
+            if _looks_like_news(s) and (s.schedule_times or s.rules_prompt or s.chat_id):
+                news_from_support = s
+                break
+
+        news_idx = next((i for i, s in enumerate(channel.slots) if s.kind == "news"), None)
+        channel_has_useful_news = news_idx is not None and (
+            channel.slots[news_idx].schedule_times or channel.slots[news_idx].rules_prompt
+        )
+
+        # Pick a channel slot for news: existing news slot, else first non-config empty, else slot 1
+        if news_idx is None:
+            for i, s in enumerate(channel.slots):
+                if s.kind != "config" and not (s.schedule_times or s.message_template):
+                    news_idx = i
+                    break
+            if news_idx is None:
+                news_idx = 1 if len(channel.slots) > 1 else 0
+
+        if news_from_support and not channel_has_useful_news:
+            dest = (
+                owner.channel
+                or channel.chat_id
+                or (news_from_support.chat_id if not str(news_from_support.chat_id or "").isdigit() else "")
+                or "@blackFoxVPNN"
+            )
+            times = news_from_support.schedule_times or "10:00,17:00"
+            # If support had no schedule, keep default news times
+            if not news_from_support.schedule_times and "10:00" not in times:
+                times = "10:00,17:00"
+            channel.slots[news_idx] = MessageSlot(
+                index=news_idx,
+                kind="news",
+                chat_id=dest if not str(dest).isdigit() else (owner.channel or "@blackFoxVPNN"),
+                message_template="",
+                schedule_times=times if times else "10:00,17:00",
+                rules_prompt=news_from_support.rules_prompt or DEFAULT_SOCIAL_RULES,
+                enabled=True,
+            )
+            if not channel.chat_id or str(channel.chat_id).strip().isdigit():
+                channel.chat_id = owner.channel or "@blackFoxVPNN"
+            changed = True
+        elif news_idx is not None and channel.slots[news_idx].kind != "news" and not channel_has_useful_news:
+            # Ensure a dedicated news slot exists on channel
+            s = channel.slots[news_idx]
+            channel.slots[news_idx] = MessageSlot(
+                index=news_idx,
+                kind="news",
+                chat_id=s.chat_id or channel.chat_id or owner.channel or "@blackFoxVPNN",
+                schedule_times=s.schedule_times or "10:00,17:00",
+                rules_prompt=s.rules_prompt or DEFAULT_SOCIAL_RULES,
+                enabled=True,
+            )
+            changed = True
+
+        # Convert support news-like slots → clean static user messages
+        for i, s in enumerate(support.slots):
+            if _looks_like_news(s) or s.kind == "news":
+                support.slots[i] = MessageSlot(
+                    index=i,
+                    kind="static",
+                    chat_id=s.chat_id if str(s.chat_id or "").isdigit() else (s.chat_id or ""),
+                    message_template="",
+                    schedule_times="",
+                    rules_prompt="فقط پیام کوتاه و مودبانه برای اکانت کاربر بفرست.",
+                    enabled=False,
+                )
+                changed = True
+
+        if changed:
+            targets["channel"] = channel.to_dict()
+            targets["support"] = support.to_dict()
+            self._data["targets"] = targets
+            self._data["version"] = max(int(self._data.get("version") or 0), 4)
+            self._save_sync()
+            logger.info("Migrated news settings from Account → Channel")
+        return changed
 
     async def get_owner(self) -> OwnerInfo:
         async with self._lock:
@@ -406,7 +528,7 @@ class BotSettingsStore:
                 cur.rules_prompt = s0.rules_prompt
                 if s0.chat_id:
                     cur.chat_id = s0.chat_id
-            # Channel config slot → nightly helpers
+            # Channel news/config mirrors for job helpers
             if key == "channel":
                 for s in cur.slots:
                     if s.kind == "config" and s.schedule_times:
@@ -415,14 +537,14 @@ class BotSettingsStore:
                             cur.message_template = s.message_template
                         if s.chat_id:
                             cur.chat_id = s.chat_id
-            if key == "support":
-                for s in cur.slots:
                     if s.kind == "news" and s.schedule_times:
-                        cur.schedule_times = s.schedule_times
-                        if s.rules_prompt:
-                            cur.rules_prompt = s.rules_prompt
                         if s.chat_id:
-                            cur.chat_id = s.chat_id
+                            cur.chat_id = cur.chat_id or s.chat_id
+            # Account section never stores news
+            if key == "support":
+                for i, s in enumerate(cur.slots):
+                    if s.kind == "news":
+                        cur.slots[i].kind = "static"
             targets = self._data.setdefault("targets", {})
             targets[key] = cur.to_dict()
             self._save_sync()
@@ -478,17 +600,17 @@ class BotSettingsStore:
         return (t.message_template or DEFAULT_NIGHTLY_TEMPLATE).strip()
 
     async def effective_social_chat_id(self, settings: Settings) -> str:
+        """News posts always target Channel (never personal Account)."""
         channel = await self.get_target("channel")
         for s in channel.slots:
             if s.kind == "news" and s.enabled and (s.chat_id or channel.chat_id):
                 return (s.chat_id or channel.chat_id).strip()
         if (channel.chat_id or "").strip():
             return channel.chat_id.strip()
-        support = await self.get_target("support")
+        owner = await self.get_owner()
         return (
-            support.effective_chat_id(0)
+            owner.channel
             or settings.social_news_chat_id
-            or settings.nightly_support_chat_id
             or ""
         ).strip()
 
@@ -497,22 +619,14 @@ class BotSettingsStore:
         for s in channel.slots:
             if s.kind == "news" and s.schedule_times:
                 return s.schedule_times.strip()
-        t = await self.get_target("support")
-        for s in t.slots:
-            if s.kind == "news" and s.schedule_times:
-                return s.schedule_times.strip()
-        return (t.schedule_times or settings.social_news_times).strip()
+        return (settings.social_news_times or "10:00,17:00").strip()
 
     async def effective_social_rules(self) -> str:
         channel = await self.get_target("channel")
         for s in channel.slots:
             if s.kind == "news" and s.rules_prompt:
                 return s.rules_prompt.strip()
-        t = await self.get_target("support")
-        for s in t.slots:
-            if s.kind == "news" and s.rules_prompt:
-                return s.rules_prompt.strip()
-        return (t.rules_prompt or DEFAULT_SOCIAL_RULES).strip()
+        return DEFAULT_SOCIAL_RULES.strip()
 
     async def effective_test_chat_id(self, settings: Settings) -> str:
         t = await self.get_target("test")

@@ -161,13 +161,26 @@ async def _show_target(
     target = await store.get_target(key)
     note = ""
     if key == "support" and (lang or "").startswith("fa"):
-        note = "\n\nاین بخش برای اکانت کاربر معمولی است (نه کانال/گروه)."
+        note = (
+            "\n\nاین بخش فقط برای پیام به اکانت کاربر معمولی است "
+            "(نه کانال/گروه). خبر و کانفیگ را در بخش کانال تنظیم کنید."
+        )
     elif key == "support":
-        note = "\n\nThis section is for a normal user account (not channel/group)."
-    elif key in {"channel", "group"} and (lang or "").startswith("fa"):
-        note = "\n\nربات باید در کانال/گروه مدیر باشد."
-    elif key in {"channel", "group"}:
-        note = "\n\nBot must be an admin in the channel/group."
+        note = (
+            "\n\nThis section is for normal user-account messages only "
+            "(not channel/group). Configure news/config under Channel."
+        )
+    elif key == "channel" and (lang or "").startswith("fa"):
+        note = (
+            "\n\nخبر و کانفیگ رایگان اینجا تنظیم می‌شود. "
+            "ربات باید در کانال مدیر باشد."
+        )
+    elif key == "channel":
+        note = "\n\nNews and free-config slots live here. Bot must be channel admin."
+    elif key == "group" and (lang or "").startswith("fa"):
+        note = "\n\nربات باید در گروه مدیر باشد."
+    elif key == "group":
+        note = "\n\nBot must be an admin in the group."
     await message.answer(
         (store.format_target_card(target, lang=lang) + note)[:3900],
         reply_markup=ak.target_edit_keyboard(lang),
