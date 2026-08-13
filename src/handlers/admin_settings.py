@@ -49,7 +49,11 @@ router = Router(name="admin_settings")
 
 
 class _SettingsButtonFilter(Filter):
-    """Match built-in settings labels, custom buttons, or product manage labels."""
+    """Match built-in settings labels or runtime custom button labels.
+
+    Do NOT match main-menu product labels here — those must reach the public menu
+    router. Product rows in the Products hub are handled via session mode text.
+    """
 
     def __init__(self, static: set[str] | frozenset[str]) -> None:
         self._static = frozenset(static)
@@ -58,11 +62,7 @@ class _SettingsButtonFilter(Filter):
         text = (message.text or "").strip()
         if not text:
             return False
-        return (
-            text in self._static
-            or text in ak.custom_button_labels()
-            or text in ak.product_manage_labels()
-        )
+        return text in self._static or text in ak.custom_button_labels()
 
 
 async def _settings_kb(lang: str, store: BotSettingsStore):
@@ -605,20 +605,6 @@ def setup_admin_settings_router(
                     show_settings_hub=_show_settings_hub,
                 )
                 return
-            # Product row tap inside products hub
-            ok, lang = await _require_settings(message)
-            if not ok:
-                return
-            sess = await bot_settings.get_session(uid)
-            if str(sess.get("mode") or "") in {"products_hub", "product_detail", ""}:
-                pid = _match_product_id_from_button(settings.knowledge_root, message.text or "")
-                if pid:
-                    await users.set_ask_ai(uid, False)
-                    await bot_settings.set_session(
-                        uid, {"mode": "product_detail", "product_id": pid}
-                    )
-                    await _show_product_detail(message, settings, lang, pid)
-                    return
             return
 
         # Health report is allowed for stats-only admins too.
@@ -1173,6 +1159,32 @@ def setup_admin_settings_router(
                 reply_markup=ak.cancel_keyboard(lang),
             )
             return
+
+    @router.message(F.chat.type == "private", F.text, ~F.text.startswith("/"))
+    async def on_products_hub_pick(message: Message) -> None:
+        """Admin product-row taps while in Products hub (before public menu router)."""
+        uid = _uid(message)
+        if not uid or not await access.can_settings(uid):
+            raise SkipHandler()
+        sess = await bot_settings.get_session(uid)
+        mode = str(sess.get("mode") or "")
+        if mode not in {"products_hub", "product_detail"}:
+            raise SkipHandler()
+        text = (message.text or "").strip()
+        if not text:
+            raise SkipHandler()
+        # Let dedicated settings/product action buttons handle themselves.
+        if ak.resolve_action(text):
+            raise SkipHandler()
+        if text in ak.texts("cancel"):
+            raise SkipHandler()
+        pid = _match_product_id_from_button(settings.knowledge_root, text)
+        if not pid:
+            raise SkipHandler()
+        lang = await _lang(users, message)
+        await users.set_ask_ai(uid, False)
+        await bot_settings.set_session(uid, {"mode": "product_detail", "product_id": pid})
+        await _show_product_detail(message, settings, lang, pid)
 
     @router.message(F.chat.type == "private", F.document | F.photo)
     async def on_catalog_upload(message: Message) -> None:
