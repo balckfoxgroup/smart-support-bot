@@ -134,12 +134,21 @@ async def _show_settings_hub(
     message: Message, lang: str, bot_settings: BotSettingsStore | None = None
 ) -> None:
     customs: list = []
+    generated: list = []
     if bot_settings is not None:
         customs = await bot_settings.list_custom_buttons(menu="settings")
-        ak.refresh_custom_button_labels(customs)
+        try:
+            from src.generated.buttons import list_generated_buttons
+
+            generated = list_generated_buttons(menu="settings", refresh=True)
+        except Exception:  # noqa: BLE001
+            generated = []
+        ak.refresh_custom_button_labels(list(customs) + list(generated))
     await message.answer(
         ak.msg("settings_hub", lang),
-        reply_markup=ak.settings_hub_keyboard(lang, custom_buttons=customs),
+        reply_markup=ak.settings_hub_keyboard(
+            lang, custom_buttons=customs, generated_buttons=generated
+        ),
     )
 
 

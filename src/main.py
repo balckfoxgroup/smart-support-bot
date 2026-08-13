@@ -121,7 +121,16 @@ async def run() -> None:
 
     ak.set_settings_columns(int(ui_prefs.get("settings_columns") or 2))
     customs = await bot_settings.list_custom_buttons(menu="settings")
-    ak.refresh_custom_button_labels(customs)
+    try:
+        from src.generated.buttons import list_generated_buttons, preload_all
+
+        generated = list_generated_buttons(menu="settings", refresh=True)
+        loaded = preload_all()
+        log.info("Generated admin buttons loaded: %s modules", loaded)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Generated buttons preload skipped: %s", exc)
+        generated = []
+    ak.refresh_custom_button_labels(list(customs) + list(generated))
     access = AdminAccess(settings, bot_settings)
 
     knowledge = KnowledgeLoader(settings)

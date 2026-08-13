@@ -55,8 +55,17 @@ class _SettingsButtonFilter(Filter):
 
 async def _settings_kb(lang: str, store: BotSettingsStore):
     customs = await store.list_custom_buttons(menu="settings")
-    ak.refresh_custom_button_labels(customs)
-    return ak.settings_hub_keyboard(lang, custom_buttons=customs)
+    generated: list = []
+    try:
+        from src.generated.buttons import list_generated_buttons
+
+        generated = list_generated_buttons(menu="settings", refresh=True)
+    except Exception:  # noqa: BLE001
+        generated = []
+    ak.refresh_custom_button_labels(list(customs) + list(generated))
+    return ak.settings_hub_keyboard(
+        lang, custom_buttons=customs, generated_buttons=generated
+    )
 
 _TARGET_BY_ACTION = {
     "msg_channel": "channel",
@@ -170,12 +179,21 @@ async def _show_settings_hub(
     message: Message, lang: str, bot_settings: BotSettingsStore | None = None
 ) -> None:
     customs: list = []
+    generated: list = []
     if bot_settings is not None:
         customs = await bot_settings.list_custom_buttons(menu="settings")
-        ak.refresh_custom_button_labels(customs)
+        try:
+            from src.generated.buttons import list_generated_buttons
+
+            generated = list_generated_buttons(menu="settings", refresh=True)
+        except Exception:  # noqa: BLE001
+            generated = []
+        ak.refresh_custom_button_labels(list(customs) + list(generated))
     await message.answer(
         ak.msg("settings_hub", lang),
-        reply_markup=ak.settings_hub_keyboard(lang, custom_buttons=customs),
+        reply_markup=ak.settings_hub_keyboard(
+            lang, custom_buttons=customs, generated_buttons=generated
+        ),
     )
 
 
@@ -433,8 +451,32 @@ def setup_admin_settings_router(
         lang = await _lang(users, message)
         action = ak.resolve_action(message.text)
 
-        # Custom buttons (must run before empty-action return).
+        # Custom / generated buttons (must run before empty-action return).
         if not action:
+            try:
+                from src.generated.buttons import dispatch_generated, find_generated_by_label
+
+                gen = find_generated_by_label(message.text or "")
+            except Exception:  # noqa: BLE001
+                gen = None
+            if gen:
+                ok, lang = await _require_settings(message)
+                if not ok:
+                    return
+                ran = await dispatch_generated(
+                    message,
+                    gen,
+                    lang=lang,
+                    settings=settings,
+                    bot_settings=bot_settings,
+                )
+                if not ran:
+                    await message.answer(
+                        "اجرای کلید تولیدشده ناموفق بود."
+                        if lang.startswith("fa")
+                        else "Generated button failed to run."
+                    )
+                return
             raw_btn = await bot_settings.find_custom_button_by_label(message.text or "")
             if raw_btn:
                 ok, lang = await _require_settings(message)
@@ -1295,33 +1337,82 @@ def setup_admin_settings_router(
                 for x in ("کلید بساز", "دکمه بساز", "اضافه کردن کلید", "add button", "create button")
             )
             if wants_list_buttons:
-                items = await bot_settings.list_custom_buttons(menu="settings")
-                if not items:
-                    body = "کلید سفارشی ندارید." if lang.startswith("fa") else "No custom buttons."
-                else:
-                    lines = []
-                    for b in items:
+                from src.generated.buttons import list_generated_buttons
+
+                gen_items = list_generated_buttons(menu="settings", refresh=True)
+                cat_items = await bot_settings.list_custom_buttons(menu="settings")
+                lines: list[str] = []
+                if gen_items:
+                    lines.append("—— کلیدهای کدنویسی‌شده (AI) ——" if lang.startswith("fa") else "—— AI-coded buttons ——")
+                    for b in gen_items:
+                        lines.append(
+                            f"• {b.get('id')}: {b.get('label_fa') or b.get('label_en')} [generated]"
+                        )
+                if cat_items:
+                    lines.append("—— کلیدهای کاتالوگ ——" if lang.startswith("fa") else "—— Catalog buttons ——")
+                    for b in cat_items:
                         lines.append(
                             f"• {b.get('id')}: {b.get('label_fa') or b.get('label_en')} → {b.get('action')}"
                         )
+                if not lines:
+                    body = "کلید سفارشی ندارید." if lang.startswith("fa") else "No custom buttons."
+                else:
                     body = "\n".join(lines)
-                await message.answer(
-                    body + "\n\n" + action_catalog_help(lang=lang),
-                    reply_markup=ak.cancel_keyboard(lang),
-                )
+                await message.answer(body[:3900], reply_markup=ak.cancel_keyboard(lang))
                 return
             if wants_remove_button:
-                # Prefer explicit id=cb_xxx or quoted/remaining label text
+                from src.button_codegen import queue_generated_button_remove
+                from src.generated.buttons import list_generated_buttons
+
                 bid = ""
                 label = ""
                 for token in text.replace("،", " ").split():
-                    if token.startswith("id=") or token.startswith("cb_"):
+                    if token.startswith("id=") or token.startswith("btn_") or token.startswith("cb_"):
                         bid = token.split("=", 1)[-1].strip()
-                # After keywords, take remaining as label if no id
                 for cue in ("حذف کلید", "پاک کردن کلید", "remove button", "delete button"):
                     if cue in text:
                         label = text.split(cue, 1)[-1].strip(" :-")
                         break
+                # Prefer generated registry removal via safe-change
+                gen_hit = None
+                for b in list_generated_buttons(menu=None, refresh=True):
+                    labs = {str(b.get("label_fa") or "").strip(), str(b.get("label_en") or "").strip()}
+                    if (bid and str(b.get("id") or "") == bid) or (label and label in labs):
+                        gen_hit = b
+                        break
+                if gen_hit:
+                    result = queue_generated_button_remove(
+                        button_id=str(gen_hit.get("id") or ""),
+                        label=str(gen_hit.get("label_fa") or ""),
+                        description=f"Remove generated button {gen_hit.get('id')}",
+                        admin_chat_id=uid,
+                    )
+                    if not result.get("ok"):
+                        await message.answer(
+                            f"❌ {result.get('error')}",
+                            reply_markup=ak.cancel_keyboard(lang),
+                        )
+                        return
+                    await audit.write(
+                        "generated_button_remove_queued",
+                        admin_id=uid,
+                        detail=str(result.get("change_id")),
+                    )
+                    await message.answer(
+                        (
+                            "🛡 حذف کلید در صف safe-change قرار گرفت.\n"
+                            f"change: `{result.get('change_id')}`\n"
+                            "ربات ری‌استارت می‌شود؛ حدود ۱ دقیقه فرصت چک دارید، بعد پیام تأیید می‌آید."
+                            if lang.startswith("fa")
+                            else (
+                                "🛡 Button removal queued via safe-change.\n"
+                                f"change: `{result.get('change_id')}`\n"
+                                "Bot will restart; ~1 minute observe, then confirm prompt."
+                            )
+                        ),
+                        reply_markup=ak.cancel_keyboard(lang),
+                    )
+                    return
                 removed = await bot_settings.remove_custom_button(button_id=bid, label=label)
                 if not removed:
                     await message.answer(
@@ -1344,72 +1435,158 @@ def setup_admin_settings_router(
                 )
                 return
             if wants_add_button:
-                # Lightweight parse: label + action=...
-                label_fa = ""
-                action_name = "noop_confirm"
-                params: dict[str, Any] = {}
-                # "کلید بساز: NAME — action=open_health"
-                chunk = text
-                for cue in ("کلید بساز", "دکمه بساز", "اضافه کردن کلید", "add button", "create button"):
-                    if cue in chunk:
-                        chunk = chunk.split(cue, 1)[-1].strip(" :-")
-                        break
-                # extract action=
-                parts = chunk.replace("—", " ").replace("–", " ").split()
-                label_bits: list[str] = []
-                for part in parts:
-                    if part.startswith("action="):
-                        action_name = part.split("=", 1)[1].strip()
-                    elif "=" in part and part.split("=", 1)[0] in {
-                        "target",
-                        "slot",
-                        "text",
-                        "menu",
-                    }:
-                        k, v = part.split("=", 1)
-                        params[k] = v
-                    else:
-                        label_bits.append(part)
-                label_fa = " ".join(label_bits).strip().strip("\"'«»")
-                if not label_fa:
-                    await message.answer(
-                        "نام کلید را هم بنویسید. مثال:\nکلید بساز: 🩺 سلامت سریع action=run_health_now\n\n"
-                        + action_catalog_help(lang=lang),
-                        reply_markup=ak.cancel_keyboard(lang),
-                    )
+                # Explicit catalog shortcut: action=run_health_now etc.
+                has_catalog_action = "action=" in text
+                if has_catalog_action:
+                    label_fa = ""
+                    action_name = "noop_confirm"
+                    params: dict[str, Any] = {}
+                    chunk = text
+                    for cue in ("کلید بساز", "دکمه بساز", "اضافه کردن کلید", "add button", "create button"):
+                        if cue in chunk:
+                            chunk = chunk.split(cue, 1)[-1].strip(" :-")
+                            break
+                    parts = chunk.replace("—", " ").replace("–", " ").split()
+                    label_bits: list[str] = []
+                    for part in parts:
+                        if part.startswith("action="):
+                            action_name = part.split("=", 1)[1].strip()
+                        elif "=" in part and part.split("=", 1)[0] in {
+                            "target",
+                            "slot",
+                            "text",
+                            "menu",
+                        }:
+                            k, v = part.split("=", 1)
+                            params[k] = v
+                        else:
+                            label_bits.append(part)
+                    label_fa = " ".join(label_bits).strip().strip("\"'«»")
+                    if label_fa and action_name in ALLOWED_ACTIONS:
+                        try:
+                            created = await bot_settings.add_custom_button(
+                                {
+                                    "id": new_button_id(),
+                                    "menu": str(params.pop("menu", "settings") or "settings"),
+                                    "label_fa": label_fa,
+                                    "label_en": label_fa,
+                                    "enabled": True,
+                                    "action": action_name,
+                                    "params": params,
+                                    "order": 50,
+                                }
+                            )
+                        except ValueError as exc:
+                            await message.answer(f"❌ {exc}", reply_markup=ak.cancel_keyboard(lang))
+                            return
+                        await audit.write(
+                            "custom_button_add",
+                            admin_id=uid,
+                            detail=f"{created.get('id')}:{created.get('action')}",
+                        )
+                        await bot_settings.set_session(uid, {"mode": "settings"})
+                        await message.answer(
+                            (
+                                "✅ کلید کاتالوگ ساخته شد:\n"
+                                if lang.startswith("fa")
+                                else "✅ Catalog button created:\n"
+                            )
+                            + f"{created.get('label_fa')} → {created.get('action')} ({created.get('id')})",
+                            reply_markup=await _settings_kb(lang, bot_settings),
+                        )
+                        return
+
+                # Default: AI writes real Python code → safe-change watchdog (~1 min).
+                from src.button_codegen import (
+                    build_codegen_user_prompt,
+                    codegen_system_prompt,
+                    extract_python_block,
+                    guess_labels_from_request,
+                    new_generated_id,
+                    queue_generated_button_add,
+                    validate_generated_button_source,
+                )
+
+                if ai is None:
+                    await message.answer("AI unavailable.", reply_markup=ak.cancel_keyboard(lang))
                     return
-                if action_name not in ALLOWED_ACTIONS:
-                    await message.answer(
-                        "این عمل مجاز نیست.\n" + action_catalog_help(lang=lang),
-                        reply_markup=ak.cancel_keyboard(lang),
-                    )
-                    return
+                button_id = new_generated_id()
+                label_fa, label_en = guess_labels_from_request(text)
+                await message.answer(
+                    "⏳ در حال کدنویسی کلید با AI…"
+                    if lang.startswith("fa")
+                    else "⏳ Generating button code with AI…"
+                )
                 try:
-                    created = await bot_settings.add_custom_button(
-                        {
-                            "id": new_button_id(),
-                            "menu": str(params.pop("menu", "settings") or "settings"),
-                            "label_fa": label_fa,
-                            "label_en": label_fa,
-                            "enabled": True,
-                            "action": action_name,
-                            "params": params,
-                            "order": 50,
-                        }
+                    answer = await ai.chat(
+                        [
+                            {"role": "system", "content": codegen_system_prompt()},
+                            {
+                                "role": "user",
+                                "content": build_codegen_user_prompt(
+                                    admin_request=text,
+                                    button_id=button_id,
+                                    label_fa=label_fa,
+                                    label_en=label_en,
+                                    lang=lang,
+                                ),
+                            },
+                        ]
                     )
-                except ValueError as exc:
+                except AIClientError as exc:
                     await message.answer(f"❌ {exc}", reply_markup=ak.cancel_keyboard(lang))
                     return
-                await audit.write(
-                    "custom_button_add",
-                    admin_id=uid,
-                    detail=f"{created.get('id')}:{created.get('action')}",
+                source = extract_python_block(strip_reasoning_leak(answer or ""))
+                ok_src, detail = validate_generated_button_source(source, button_id=button_id)
+                if not ok_src:
+                    await message.answer(
+                        (
+                            f"❌ کد تولیدشده معتبر نبود: {detail}\n"
+                            "دوباره با توضیح واضح‌تر بخواهید."
+                            if lang.startswith("fa")
+                            else f"❌ Invalid generated code: {detail}"
+                        ),
+                        reply_markup=ak.cancel_keyboard(lang),
+                    )
+                    return
+                result = queue_generated_button_add(
+                    button_id=button_id,
+                    label_fa=label_fa,
+                    label_en=label_en,
+                    source=source,
+                    description=f"AI button: {label_fa}",
+                    admin_chat_id=uid,
                 )
-                await bot_settings.set_session(uid, {"mode": "settings"})
+                if not result.get("ok"):
+                    await message.answer(
+                        f"❌ {result.get('error')}",
+                        reply_markup=ak.cancel_keyboard(lang),
+                    )
+                    return
+                await audit.write(
+                    "generated_button_add_queued",
+                    admin_id=uid,
+                    detail=f"{button_id}:{result.get('change_id')}",
+                )
                 await message.answer(
-                    ("✅ کلید ساخته شد و کار می‌کند:\n" if lang.startswith("fa") else "✅ Button created:\n")
-                    + f"{created.get('label_fa')} → {created.get('action')} ({created.get('id')})",
-                    reply_markup=await _settings_kb(lang, bot_settings),
+                    (
+                        "🛡 کلید با کد AI در صف safe-change قرار گرفت.\n"
+                        f"id: `{button_id}`\n"
+                        f"change: `{result.get('change_id')}`\n"
+                        f"برچسب: {label_fa}\n\n"
+                        "ربات ری‌استارت می‌شود، حدود ۱ دقیقه فرصت تست دارید، "
+                        "بعد پیام تأیید می‌آید. اگر تأیید نشود، خودکار برمی‌گردد."
+                        if lang.startswith("fa")
+                        else (
+                            "🛡 AI-coded button queued via safe-change.\n"
+                            f"id: `{button_id}`\n"
+                            f"change: `{result.get('change_id')}`\n"
+                            f"label: {label_fa}\n\n"
+                            "Bot restarts, ~1 minute observe, then confirm. "
+                            "No confirm → auto rollback."
+                        )
+                    ),
+                    reply_markup=ak.cancel_keyboard(lang),
                 )
                 return
 

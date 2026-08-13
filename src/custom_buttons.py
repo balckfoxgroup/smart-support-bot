@@ -304,5 +304,14 @@ async def _kb_settings(lang: str, bot_settings: BotSettingsStore):
     from src.ui import admin_keyboards as ak
 
     customs = await bot_settings.list_custom_buttons(menu="settings")
-    ak.refresh_custom_button_labels(customs)
-    return ak.settings_hub_keyboard(lang, custom_buttons=customs)
+    generated: list = []
+    try:
+        from src.generated.buttons import list_generated_buttons
+
+        generated = list_generated_buttons(menu="settings", refresh=True)
+    except Exception:  # noqa: BLE001
+        generated = []
+    ak.refresh_custom_button_labels(list(customs) + list(generated))
+    return ak.settings_hub_keyboard(
+        lang, custom_buttons=customs, generated_buttons=generated
+    )

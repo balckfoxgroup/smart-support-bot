@@ -22,7 +22,7 @@ def get_settings_columns() -> int:
 
 
 def refresh_custom_button_labels(buttons: list[dict] | None) -> set[str]:
-    """Keep filter cache in sync with stored custom buttons."""
+    """Keep filter cache in sync with stored custom + generated buttons."""
     global _custom_button_labels
     labels: set[str] = set()
     for item in buttons or []:
@@ -32,8 +32,39 @@ def refresh_custom_button_labels(buttons: list[dict] | None) -> set[str]:
             val = str(item.get(key) or "").strip()
             if val:
                 labels.add(val)
+    try:
+        from src.generated.buttons import all_generated_labels
+
+        labels.update(all_generated_labels())
+    except Exception:  # noqa: BLE001
+        pass
     _custom_button_labels = labels
     return labels
+
+
+def merge_settings_extra_buttons(
+    *,
+    lang: str | None,
+    catalog_buttons: list[dict] | None = None,
+    generated_buttons: list[dict] | None = None,
+) -> list:
+    """Build KeyboardButton list for extra settings entries."""
+    from aiogram.types import KeyboardButton
+
+    fa = (lang or "").startswith("fa")
+    out = []
+    seen: set[str] = set()
+    for item in list(catalog_buttons or []) + list(generated_buttons or []):
+        if not isinstance(item, dict) or not item.get("enabled", True):
+            continue
+        txt = str(item.get("label_fa") if fa else item.get("label_en") or "").strip()
+        if not txt:
+            txt = str(item.get("label_fa") or item.get("label_en") or "").strip()
+        if not txt or txt in seen:
+            continue
+        seen.add(txt)
+        out.append(KeyboardButton(text=txt))
+    return out
 
 
 def custom_button_labels() -> frozenset[str]:
@@ -525,24 +556,22 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
     "bot_chat_start": {
         "fa": (
             "💬 گفتگو با ربات برای تنظیمات فعال شد.\n\n"
-            "می‌توانم این‌ها را واقعاً اعمال کنم:\n"
-            "• اطلاعات اصلی (سایت/کانال/گروه/پشتیبانی/نام ربات)\n"
-            "• اسلات پیام‌ها (مقصد، زمان، روشن/خاموش، نوع)\n"
-            "• پنل (آدرس/پورت/Inbound)\n"
-            "• سلامت روزانه\n"
-            "• ظاهر کیبورد تنظیمات (۱ یا ۲ ستونه)\n"
-            "• ساخت/حذف کلید سفارشی روی منوی تنظیمات (با عمل آماده)\n\n"
+            "می‌توانم این‌ها را اعمال کنم:\n"
+            "• اطلاعات اصلی / اسلات / پنل / سلامت / ستون کیبورد\n"
+            "• ساخت کلید با کدنویسی AI (از مسیر امن safe-change با تأیید حدود ۱ دقیقه)\n"
+            "• حذف کلید تولیدشده\n\n"
+            "مثال:\n"
+            "کلید بساز: گزارش سریع سلامت برای ادمین\n\n"
             "برای پایان: بازگشت به تنظیمات."
         ),
         "en": (
             "💬 Bot config chat is on.\n\n"
-            "I can actually apply:\n"
-            "• Owner info (site/channel/group/support/bot name)\n"
-            "• Message slots (dest, schedule, on/off, kind)\n"
-            "• Panel (URL/port/inbound)\n"
-            "• Daily health\n"
-            "• Settings keyboard layout (1 or 2 columns)\n"
-            "• Add/remove custom settings buttons (bound to ready actions)\n\n"
+            "I can apply:\n"
+            "• Owner / slots / panel / health / keyboard columns\n"
+            "• Create buttons with AI-written code (safe-change + ~1 min confirm)\n"
+            "• Remove generated buttons\n\n"
+            "Example:\n"
+            "create button: quick health report for admin\n\n"
             "To exit: Back to Settings."
         ),
     },
@@ -833,6 +862,7 @@ def settings_hub_keyboard(
     lang: str | None = "en",
     *,
     custom_buttons: list[dict] | None = None,
+    generated_buttons: list[dict] | None = None,
 ) -> ReplyKeyboardMarkup:
     buttons = [
         KeyboardButton(text=label("owner_info", lang)),
@@ -846,17 +876,15 @@ def settings_hub_keyboard(
         KeyboardButton(text=label("manage_admins", lang)),
         KeyboardButton(text=label("creator_contact", lang)),
     ]
-    fa = (lang or "").startswith("fa")
-    for item in custom_buttons or []:
-        if not isinstance(item, dict) or not item.get("enabled", True):
-            continue
-        txt = str(item.get("label_fa") if fa else item.get("label_en") or "").strip()
-        if not txt:
-            txt = str(item.get("label_fa") or item.get("label_en") or "").strip()
-        if txt:
-            buttons.append(KeyboardButton(text=txt))
+    buttons.extend(
+        merge_settings_extra_buttons(
+            lang=lang,
+            catalog_buttons=custom_buttons,
+            generated_buttons=generated_buttons,
+        )
+    )
     buttons.append(KeyboardButton(text=label("stats_back", lang)))
-    refresh_custom_button_labels(custom_buttons)
+    refresh_custom_button_labels(list(custom_buttons or []) + list(generated_buttons or []))
     return ReplyKeyboardMarkup(
         keyboard=_chunk_rows(buttons),
         resize_keyboard=True,
