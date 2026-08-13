@@ -156,10 +156,6 @@ def installer_keyboard(lang: Lang) -> ReplyKeyboardMarkup:
             KeyboardButton(text=_label("buy_license", lang)),
             KeyboardButton(text=_label("buy_vps", lang)),
         ],
-        [
-            KeyboardButton(text=_label("contact", lang)),
-            KeyboardButton(text=_label("lang", lang)),
-        ],
         [KeyboardButton(text=_label("home", lang))],
     ]
     return ReplyKeyboardMarkup(
