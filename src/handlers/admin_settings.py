@@ -10,7 +10,7 @@ from typing import Any
 from aiogram import F, Router
 from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.filters import Filter
-from aiogram.types import Message
+from aiogram.types import LinkPreviewOptions, Message
 
 from src.access import AdminAccess
 from src.ai.client import AIClient, AIClientError
@@ -28,7 +28,15 @@ from src.custom_buttons import (
 )
 from src.health_report import build_health_report
 from src.knowledge.catalog_builder import build_one_catalog, prepare_work_folder
-from src.knowledge.product_catalogs import load_product_catalogs
+from src.knowledge.product_catalogs import (
+    create_product_stub,
+    delete_product,
+    find_product_by_label,
+    get_product,
+    list_all_product_dicts,
+    load_product_catalogs,
+    update_product_fields,
+)
 from src.storage.bot_settings import SLOT_KINDS, TARGET_KEYS, BotSettingsStore
 from src.storage.users import UserStore
 from src.ui import admin_keyboards as ak
@@ -41,7 +49,7 @@ router = Router(name="admin_settings")
 
 
 class _SettingsButtonFilter(Filter):
-    """Match built-in settings labels or runtime custom button labels."""
+    """Match built-in settings labels, custom buttons, or product manage labels."""
 
     def __init__(self, static: set[str] | frozenset[str]) -> None:
         self._static = frozenset(static)
@@ -50,7 +58,11 @@ class _SettingsButtonFilter(Filter):
         text = (message.text or "").strip()
         if not text:
             return False
-        return text in self._static or text in ak.custom_button_labels()
+        return (
+            text in self._static
+            or text in ak.custom_button_labels()
+            or text in ak.product_manage_labels()
+        )
 
 
 async def _settings_kb(lang: str, store: BotSettingsStore):
@@ -65,6 +77,92 @@ async def _settings_kb(lang: str, store: BotSettingsStore):
     ak.refresh_custom_button_labels(list(customs) + list(generated))
     return ak.settings_hub_keyboard(
         lang, custom_buttons=customs, generated_buttons=generated
+    )
+
+
+def _product_button_labels(knowledge_root: Path, lang: str) -> list[str]:
+    labels: list[str] = []
+    for data in list_all_product_dicts(knowledge_root):
+        pid = str(data.get("product_id") or "")
+        title = (data.get("title") or {})
+        name = str(title.get("fa") or title.get("en") or pid)
+        emoji = str(data.get("menu_emoji") or "").strip()
+        on = bool(data.get("enabled", True))
+        prefix = "" if on else "⬜ "
+        labels.append(f"{prefix}{emoji} {name}".strip() if emoji else f"{prefix}{name}".strip())
+    return labels
+
+
+def _match_product_id_from_button(knowledge_root: Path, text: str) -> str | None:
+    needle = (text or "").strip()
+    for prefix in ("⬜ ", "✅ "):
+        if needle.startswith(prefix):
+            needle = needle[len(prefix) :].strip()
+            break
+    for data in list_all_product_dicts(knowledge_root):
+        pid = str(data.get("product_id") or "")
+        title = data.get("title") or {}
+        name = str(title.get("fa") or title.get("en") or pid)
+        emoji = str(data.get("menu_emoji") or "").strip()
+        label = f"{emoji} {name}".strip() if emoji else name
+        if needle in {label, name, pid, f"⬜ {label}", f"✅ {label}"}:
+            return pid
+    hit = find_product_by_label(needle, lang="fa") or find_product_by_label(needle, lang="en")
+    return hit.product_id if hit else None
+
+
+async def _show_products_hub(message: Message, settings: Settings, lang: str) -> None:
+    load_product_catalogs(settings.knowledge_root)
+    labels = _product_button_labels(settings.knowledge_root, lang)
+    ak.refresh_product_manage_labels(labels)
+    body = ak.msg("products_hub_intro", lang)
+    if not labels:
+        body += "\n\n" + ak.msg("products_empty", lang)
+    else:
+        lines = []
+        for data in list_all_product_dicts(settings.knowledge_root):
+            pid = data.get("product_id")
+            on = "روشن" if data.get("enabled", True) else "خاموش"
+            if not (lang or "").startswith("fa"):
+                on = "on" if data.get("enabled", True) else "off"
+            lines.append(f"• `{pid}` — {on}")
+        body += "\n\n" + "\n".join(lines)
+    await message.answer(
+        body[:3900],
+        reply_markup=ak.products_hub_keyboard(lang, product_labels=labels),
+        link_preview_options=LinkPreviewOptions(is_disabled=True),
+    )
+
+
+async def _show_product_detail(
+    message: Message, settings: Settings, lang: str, product_id: str
+) -> None:
+    load_product_catalogs(settings.knowledge_root)
+    data = None
+    for item in list_all_product_dicts(settings.knowledge_root):
+        if str(item.get("product_id")) == product_id:
+            data = item
+            break
+    if not data:
+        await _show_products_hub(message, settings, lang)
+        return
+    title = (data.get("title") or {})
+    name = title.get("fa") or title.get("en") or product_id
+    summary = (data.get("short_summary") or {}).get("fa") or (data.get("short_summary") or {}).get(
+        "en"
+    ) or "—"
+    on = data.get("enabled", True)
+    body = (
+        f"🏷 {data.get('menu_emoji') or ''} {name}\n"
+        f"id: `{product_id}`\n"
+        f"{'وضعیت منو' if (lang or '').startswith('fa') else 'Menu'}: "
+        f"{'روشن' if on else 'خاموش' if (lang or '').startswith('fa') else ('on' if on else 'off')}\n\n"
+        f"{summary}"
+    )
+    await message.answer(
+        body[:3900],
+        reply_markup=ak.product_detail_keyboard(lang),
+        link_preview_options=LinkPreviewOptions(is_disabled=True),
     )
 
 _TARGET_BY_ACTION = {
@@ -392,6 +490,15 @@ def setup_admin_settings_router(
         | ak.texts("creator_contact")
         | ak.texts("bot_config_chat")
         | ak.texts("build_catalogs")
+        | ak.texts("products_hub")
+        | ak.texts("products_add")
+        | ak.texts("products_edit_title")
+        | ak.texts("products_edit_emoji")
+        | ak.texts("products_edit_summary")
+        | ak.texts("products_toggle")
+        | ak.texts("products_delete")
+        | ak.texts("products_build_catalog")
+        | ak.texts("products_back")
         | ak.texts("catalog_src_site")
         | ak.texts("catalog_src_channel")
         | ak.texts("catalog_src_group")
@@ -498,6 +605,20 @@ def setup_admin_settings_router(
                     show_settings_hub=_show_settings_hub,
                 )
                 return
+            # Product row tap inside products hub
+            ok, lang = await _require_settings(message)
+            if not ok:
+                return
+            sess = await bot_settings.get_session(uid)
+            if str(sess.get("mode") or "") in {"products_hub", "product_detail", ""}:
+                pid = _match_product_id_from_button(settings.knowledge_root, message.text or "")
+                if pid:
+                    await users.set_ask_ai(uid, False)
+                    await bot_settings.set_session(
+                        uid, {"mode": "product_detail", "product_id": pid}
+                    )
+                    await _show_product_detail(message, settings, lang, pid)
+                    return
             return
 
         # Health report is allowed for stats-only admins too.
@@ -604,13 +725,19 @@ def setup_admin_settings_router(
             mode = str(sess.get("mode") or "")
             target_key = str(sess.get("target_key") or "")
             slot_index = sess.get("slot_index")
-            if mode in {"backup", "health", "admins", "catalog_wizard"}:
+            if mode in {"backup", "health", "admins", "catalog_wizard", "products_hub"}:
                 await bot_settings.clear_session(uid)
                 await _show_settings_hub(message, lang, bot_settings)
                 return
-            if mode == "catalog_wizard":
-                await bot_settings.clear_session(uid)
-                await _show_settings_hub(message, lang, bot_settings)
+            if mode in {
+                "products_add_title",
+                "products_add_emoji",
+                "products_add_summary",
+                "products_edit",
+                "product_detail",
+            }:
+                await bot_settings.set_session(uid, {"mode": "products_hub"})
+                await _show_products_hub(message, settings, lang)
                 return
             if mode in {"edit_slot", "scoped_rules_ai"} and target_key in TARGET_KEYS and slot_index is not None:
                 await bot_settings.set_session(
@@ -655,6 +782,17 @@ def setup_admin_settings_router(
             if mode == "catalog_wizard":
                 await _show_catalog_wizard(message, bot_settings, uid, lang)
                 return
+            if mode in {
+                "products_hub",
+                "product_detail",
+                "products_add_title",
+                "products_add_emoji",
+                "products_add_summary",
+                "products_edit",
+            }:
+                await bot_settings.set_session(uid, {"mode": "products_hub"})
+                await _show_products_hub(message, settings, lang)
+                return
             await bot_settings.clear_session(uid)
             if target_key in TARGET_KEYS and slot_index is not None:
                 await bot_settings.set_session(
@@ -695,6 +833,98 @@ def setup_admin_settings_router(
                 ak.msg("bot_chat_start", lang),
                 reply_markup=ak.cancel_keyboard(lang),
             )
+            return
+
+        if action == "products_hub":
+            await bot_settings.set_session(uid, {"mode": "products_hub"})
+            await _show_products_hub(message, settings, lang)
+            return
+
+        if action == "products_back":
+            await bot_settings.set_session(uid, {"mode": "products_hub"})
+            await _show_products_hub(message, settings, lang)
+            return
+
+        if action == "products_add":
+            await bot_settings.set_session(uid, {"mode": "products_add_title"})
+            await message.answer(
+                ak.msg("products_ask_title", lang),
+                reply_markup=ak.cancel_keyboard(lang),
+            )
+            return
+
+        if action in {
+            "products_edit_title",
+            "products_edit_emoji",
+            "products_edit_summary",
+            "products_toggle",
+            "products_delete",
+            "products_build_catalog",
+        }:
+            sess = await bot_settings.get_session(uid)
+            pid = str(sess.get("product_id") or "").strip()
+            if not pid:
+                await bot_settings.set_session(uid, {"mode": "products_hub"})
+                await _show_products_hub(message, settings, lang)
+                return
+            if action == "products_toggle":
+                data = next(
+                    (
+                        d
+                        for d in list_all_product_dicts(settings.knowledge_root)
+                        if str(d.get("product_id")) == pid
+                    ),
+                    None,
+                )
+                cur = bool((data or {}).get("enabled", True))
+                update_product_fields(settings.knowledge_root, pid, enabled=not cur)
+                await audit.write("product_toggle", admin_id=uid, detail=f"{pid}:{not cur}")
+                await bot_settings.set_session(
+                    uid, {"mode": "product_detail", "product_id": pid}
+                )
+                await _show_product_detail(message, settings, lang, pid)
+                return
+            if action == "products_delete":
+                delete_product(settings.knowledge_root, pid)
+                await audit.write("product_delete", admin_id=uid, detail=pid)
+                await bot_settings.set_session(uid, {"mode": "products_hub"})
+                await message.answer(ak.msg("products_deleted", lang))
+                await _show_products_hub(message, settings, lang)
+                return
+            if action == "products_build_catalog":
+                staging = _staging_dir(settings, uid)
+                if staging.exists():
+                    shutil.rmtree(staging, ignore_errors=True)
+                staging.mkdir(parents=True, exist_ok=True)
+                await bot_settings.set_session(
+                    uid,
+                    {
+                        "mode": "catalog_wizard",
+                        "catalog_sources": {"site": False, "channel": False, "group": False},
+                        "catalog_path": "",
+                        "catalog_staging": str(staging),
+                        "product_id": pid,
+                        "product_hint": pid,
+                    },
+                )
+                await _show_catalog_wizard(message, bot_settings, uid, lang)
+                await message.answer(ak.msg("catalog_ask_path", lang))
+                return
+            field = {
+                "products_edit_title": "title",
+                "products_edit_emoji": "emoji",
+                "products_edit_summary": "summary",
+            }[action]
+            await bot_settings.set_session(
+                uid,
+                {"mode": "products_edit", "product_id": pid, "product_field": field},
+            )
+            ask = {
+                "title": "products_ask_edit_title",
+                "emoji": "products_ask_edit_emoji",
+                "summary": "products_ask_edit_summary",
+            }[field]
+            await message.answer(ak.msg(ask, lang), reply_markup=ak.cancel_keyboard(lang))
             return
 
         if action == "build_catalogs":
@@ -738,11 +968,14 @@ def setup_admin_settings_router(
             staging = Path(str(sess.get("catalog_staging") or ""))
             await message.answer(ak.msg("catalog_building", lang))
             try:
+                hint = str(sess.get("product_hint") or sess.get("product_id") or "").strip()
+                if not hint:
+                    hint = Path(folder_path).name if folder_path else "product"
                 folder = prepare_work_folder(
                     knowledge_root=settings.knowledge_root,
                     folder_path=folder_path or None,
                     staging_dir=staging if staging.is_dir() else None,
-                    product_hint=Path(folder_path).name if folder_path else "product",
+                    product_hint=hint,
                 )
                 owner = await bot_settings.get_owner()
                 extras: list[str] = []
@@ -1032,11 +1265,83 @@ def setup_admin_settings_router(
             "scoped_rules_ai",
             "bot_config_chat",
             "catalog_wizard",
+            "products_add_title",
+            "products_add_emoji",
+            "products_add_summary",
+            "products_edit",
         }:
             raise SkipHandler()
 
         text = (message.text or "").strip()
         if not text:
+            return
+
+        if mode == "products_add_title":
+            await bot_settings.set_session(
+                uid, {"mode": "products_add_emoji", "new_product_title": text}
+            )
+            await message.answer(
+                ak.msg("products_ask_emoji", lang),
+                reply_markup=ak.cancel_keyboard(lang),
+            )
+            return
+        if mode == "products_add_emoji":
+            emoji = "📦" if text in {"—", "-", "–", "default"} else text.strip()[:8]
+            sess["new_product_emoji"] = emoji
+            sess["mode"] = "products_add_summary"
+            await bot_settings.set_session(uid, sess)
+            await message.answer(
+                ak.msg("products_ask_summary", lang),
+                reply_markup=ak.cancel_keyboard(lang),
+            )
+            return
+        if mode == "products_add_summary":
+            title = str(sess.get("new_product_title") or "").strip()
+            emoji = str(sess.get("new_product_emoji") or "📦")
+            try:
+                created = create_product_stub(
+                    settings.knowledge_root,
+                    title=title or "Product",
+                    emoji=emoji,
+                    summary=text,
+                )
+            except Exception as exc:  # noqa: BLE001
+                await message.answer(f"❌ {exc}", reply_markup=ak.cancel_keyboard(lang))
+                return
+            await audit.write("product_add", admin_id=uid, detail=created.product_id)
+            await bot_settings.set_session(
+                uid, {"mode": "product_detail", "product_id": created.product_id}
+            )
+            await message.answer(ak.msg("saved_ok", lang))
+            await _show_product_detail(message, settings, lang, created.product_id)
+            return
+        if mode == "products_edit":
+            pid = str(sess.get("product_id") or "").strip()
+            field = str(sess.get("product_field") or "").strip()
+            if not pid or field not in {"title", "emoji", "summary"}:
+                await bot_settings.set_session(uid, {"mode": "products_hub"})
+                await _show_products_hub(message, settings, lang)
+                return
+            try:
+                if field == "title":
+                    update_product_fields(settings.knowledge_root, pid, title=text)
+                elif field == "emoji":
+                    update_product_fields(
+                        settings.knowledge_root,
+                        pid,
+                        emoji="📦" if text in {"—", "-", "–"} else text.strip()[:8],
+                    )
+                else:
+                    update_product_fields(settings.knowledge_root, pid, summary=text)
+            except Exception as exc:  # noqa: BLE001
+                await message.answer(f"❌ {exc}", reply_markup=ak.cancel_keyboard(lang))
+                return
+            await audit.write("product_edit", admin_id=uid, detail=f"{pid}:{field}")
+            await bot_settings.set_session(
+                uid, {"mode": "product_detail", "product_id": pid}
+            )
+            await message.answer(ak.msg("saved_ok", lang))
+            await _show_product_detail(message, settings, lang, pid)
             return
 
         if mode == "edit_health":
@@ -1268,6 +1573,36 @@ def setup_admin_settings_router(
             lowered = text.lower()
             if any(k in lowered for k in ("سازنده", "creator_contact", "creator contact")):
                 await message.answer(ak.msg("creator_locked", lang))
+                return
+
+            # Deterministic status card (readable; no raw dict dump / link preview).
+            stripped = text.strip()
+            wants_status = stripped.lower() in {
+                "وضعیت",
+                "status",
+                "show status",
+                "current status",
+                "وضعیت فعلی",
+                "نمایش وضعیت",
+                "وضعیت تنظیمات",
+            } or any(
+                x in text
+                for x in (
+                    "نمایش وضعیت",
+                    "وضعیت تنظیمات",
+                    "show status",
+                    "current status",
+                )
+            )
+            if wants_status:
+                from src.bot_config_apply import build_human_status
+
+                body = await build_human_status(bot_settings, lang=lang)
+                await message.answer(
+                    body[:3900],
+                    reply_markup=ak.cancel_keyboard(lang),
+                    link_preview_options=LinkPreviewOptions(is_disabled=True),
+                )
                 return
 
             # Deterministic UI layout requests (do not depend on model inventing menus).
@@ -1747,14 +2082,19 @@ def setup_admin_settings_router(
                 bot_settings=bot_settings,
                 message_bot=message.bot,
                 allowed_catalog_actions=ALLOWED_ACTIONS,
+                lang=lang,
             )
             clean = strip_apply_lines(answer or "")
             if result.status_dump:
-                clean = (
-                    (clean + "\n\n—— STATUS ——\n" + result.status_dump)
-                    if clean
-                    else result.status_dump
-                )
+                # Drop model chatter when admin only asked for status.
+                if not result.applied and not result.errors and not result.open_section:
+                    clean = result.status_dump
+                else:
+                    clean = (
+                        (clean + "\n\n" + result.status_dump)
+                        if clean
+                        else result.status_dump
+                    )
             if result.applied:
                 clean = (
                     clean
@@ -1875,6 +2215,7 @@ def setup_admin_settings_router(
             await message.answer(
                 (clean or ak.msg("saved_ok", lang))[:3900],
                 reply_markup=kb,
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
             )
             return
 

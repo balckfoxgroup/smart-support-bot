@@ -40,6 +40,7 @@ SYSTEM_PLACEMENTS: dict[str, tuple[str, ...]] = {
     "owner_info": ("settings",),
     "bot_config_chat": ("settings",),
     "build_catalogs": ("settings",),
+    "products_hub": ("settings",),
     "change_agent_api": ("settings",),
     "settings_messages": ("settings",),
     "settings_panel": ("settings",),

@@ -9,6 +9,7 @@ Lang = str
 # Runtime UI preference (1 or 2 columns). Loaded from bot_settings on start / APPLY_UI.
 _settings_columns: int = 2
 _custom_button_labels: set[str] = set()
+_product_manage_labels: set[str] = set()
 
 
 def set_settings_columns(columns: int) -> int:
@@ -69,6 +70,16 @@ def merge_settings_extra_buttons(
 
 def custom_button_labels() -> frozenset[str]:
     return frozenset(_custom_button_labels)
+
+
+def refresh_product_manage_labels(labels: list[str] | None) -> set[str]:
+    global _product_manage_labels
+    _product_manage_labels = {str(x).strip() for x in (labels or []) if str(x).strip()}
+    return _product_manage_labels
+
+
+def product_manage_labels() -> frozenset[str]:
+    return frozenset(_product_manage_labels)
 
 
 def _chunk_rows(buttons: list[KeyboardButton], cols: int | None = None) -> list[list[KeyboardButton]]:
@@ -155,6 +166,42 @@ _LABELS: dict[str, dict[Lang, str]] = {
     "build_catalogs": {
         "fa": "📦 ساخت کاتالوگ از پوشه",
         "en": "📦 Build Catalogs From Folder",
+    },
+    "products_hub": {
+        "fa": "🏷 نام محصولات",
+        "en": "🏷 Products",
+    },
+    "products_add": {
+        "fa": "➕ افزودن محصول",
+        "en": "➕ Add Product",
+    },
+    "products_edit_title": {
+        "fa": "✏️ ویرایش نام",
+        "en": "✏️ Edit Title",
+    },
+    "products_edit_emoji": {
+        "fa": "😊 ویرایش ایموجی",
+        "en": "😊 Edit Emoji",
+    },
+    "products_edit_summary": {
+        "fa": "📝 ویرایش خلاصه",
+        "en": "📝 Edit Summary",
+    },
+    "products_toggle": {
+        "fa": "👁 روشن/خاموش در منو",
+        "en": "👁 Toggle Menu Visibility",
+    },
+    "products_delete": {
+        "fa": "🗑 حذف محصول",
+        "en": "🗑 Delete Product",
+    },
+    "products_build_catalog": {
+        "fa": "📦 ساخت/تکمیل کاتالوگ",
+        "en": "📦 Build / Enrich Catalog",
+    },
+    "products_back": {
+        "fa": "↩️ بازگشت به محصولات",
+        "en": "↩️ Back to Products",
     },
     "catalog_src_site": {
         "fa": "🌐 منبع سایت",
@@ -436,6 +483,7 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
             "⚙️ تنظیمات\n\n"
             "• 📋 اطلاعات اصلی (سایت/کانال/گروه/پشتیبانی)\n"
             "• 💬 گفتگو با ربات (کل تنظیمات)\n"
+            "• 🏷 نام محصولات (افزودن/ویرایش/حذف)\n"
             "• 📦 ساخت کاتالوگ از پوشه\n"
             "• 📝 ایجنت و API / 📨 پیام‌ها / 🖥 پنل\n"
             "• 🛠 تماس با سازنده (قفل)"
@@ -444,10 +492,57 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
             "⚙️ Settings\n\n"
             "• 📋 Main Info (site/channel/group/support)\n"
             "• 💬 Chat With Bot (whole bot)\n"
+            "• 🏷 Products (add/edit/delete)\n"
             "• 📦 Build catalogs from folder\n"
             "• 📝 Agents & API / 📨 Messages / 🖥 Panel\n"
             "• 🛠 Contact Creator (locked)"
         ),
+    },
+    "products_hub_intro": {
+        "fa": (
+            "🏷 نام محصولات\n\n"
+            "منوی اصلی از کاتالوگ‌های این بخش ساخته می‌شود.\n"
+            "محصول جدید بسازید، ویرایش/حذف کنید، یا برای تکمیل محتوا کاتالوگ بسازید.\n"
+            "تعداد محصول محدودیت ندارد. نصب تازه پیش‌فرض خالی است."
+        ),
+        "en": (
+            "🏷 Products\n\n"
+            "The main menu is built from catalogs here.\n"
+            "Add, edit, or delete products, then enrich via catalog build.\n"
+            "No product limit. Fresh installs start empty."
+        ),
+    },
+    "products_ask_title": {
+        "fa": "نام محصول را بفرستید (مثلاً Config Builder):",
+        "en": "Send the product name (e.g. Config Builder):",
+    },
+    "products_ask_emoji": {
+        "fa": "یک ایموجی برای کلید منو بفرستید (یا — برای پیش‌فرض 📦):",
+        "en": "Send one emoji for the menu key (or — for default 📦):",
+    },
+    "products_ask_summary": {
+        "fa": "یک خلاصهٔ کوتاه فارسی/انگلیسی برای معرفی محصول بفرستید:",
+        "en": "Send a short summary for the product intro:",
+    },
+    "products_ask_edit_title": {
+        "fa": "نام جدید محصول را بفرستید:",
+        "en": "Send the new product title:",
+    },
+    "products_ask_edit_emoji": {
+        "fa": "ایموجی جدید را بفرستید:",
+        "en": "Send the new emoji:",
+    },
+    "products_ask_edit_summary": {
+        "fa": "خلاصهٔ جدید را بفرستید:",
+        "en": "Send the new summary:",
+    },
+    "products_empty": {
+        "fa": "هنوز محصولی ندارید. «افزودن محصول» را بزنید.",
+        "en": "No products yet. Tap Add Product.",
+    },
+    "products_deleted": {
+        "fa": "✅ محصول حذف شد و از منوی اصلی برداشته شد.",
+        "en": "✅ Product deleted and removed from the main menu.",
     },
     "messages_hub": {
         "fa": (
@@ -896,6 +991,7 @@ def settings_hub_keyboard(
         [
             "owner_info",
             "bot_config_chat",
+            "products_hub",
             "build_catalogs",
             "change_agent_api",
             "settings_messages",
@@ -1008,6 +1104,51 @@ def messages_hub_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
         resize_keyboard=True,
         is_persistent=True,
         input_field_placeholder="Default messages",
+    )
+
+
+def products_hub_keyboard(
+    lang: str | None = "en",
+    *,
+    product_labels: list[str] | None = None,
+) -> ReplyKeyboardMarkup:
+    buttons: list[KeyboardButton] = []
+    for lab in product_labels or []:
+        if lab:
+            buttons.append(KeyboardButton(text=lab))
+    buttons.extend(
+        [
+            KeyboardButton(text=label("products_add", lang)),
+            KeyboardButton(text=label("settings_back", lang)),
+        ]
+    )
+    return ReplyKeyboardMarkup(
+        keyboard=_chunk_rows(buttons),
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="Products / محصولات",
+    )
+
+
+def product_detail_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    buttons = _kb_buttons(
+        "products",
+        [
+            "products_edit_title",
+            "products_edit_emoji",
+            "products_edit_summary",
+            "products_toggle",
+            "products_build_catalog",
+            "products_delete",
+            "products_back",
+            "settings_back",
+        ],
+        lang,
+    )
+    return ReplyKeyboardMarkup(
+        keyboard=_chunk_rows(buttons),
+        resize_keyboard=True,
+        is_persistent=True,
     )
 
 

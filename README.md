@@ -17,7 +17,7 @@ Build product catalogs, answer with Ask AI, search knowledge, post news, and rec
 Most Telegram bots are either dumb menus or fragile scripts. **Smart Support Bot** is a full support brain you can run on your own VPS:
 
 - Speaks **4 languages**: Persian (`fa`), English (`en`), Russian (`ru`), Chinese (`zh`)
-- Learns your products through **AI-generated catalogs**
+- Learns your products through **admin Products menu** + optional AI catalogs
 - Answers with **Ask AI** + local knowledge + intent matching
 - Lets admins change the bot by **chatting with it**
 - Protects risky changes with **backup → confirm → auto-restore**
@@ -26,8 +26,15 @@ It is free, open source, and designed so anyone can self-host and extend it.
 
 ### Highlights (must-try features)
 
-#### 1) Product catalogs for anything
-Drop text/photos into `knowledge/catalog_inbox/`, or use the admin catalog wizard. The bot builds structured catalogs so Ask AI can introduce **any product or topic** clearly — not only VPN.
+#### 1) Products menu (empty by default)
+Fresh installs ship with **no pre-filled products**. In Settings open **Products** (`نام محصولات`):
+
+- Add any number of products (name, emoji, short summary)
+- Edit or delete products anytime
+- Each product becomes a main-menu key and a `knowledge/product_catalogs/<id>.json` file
+- Use **Build / Enrich Catalog** (or the folder wizard) to attach richer content and photos
+
+Sample JSON lives only under `knowledge/product_catalogs.examples/` (not loaded into the menu).
 
 #### 2) Ask AI everywhere
 Private chats, group replies, and menu flows all use the same AI stack:
@@ -111,9 +118,10 @@ journalctl -u smart-support-bot.service -f
 
 1. Open your bot in Telegram  
 2. Send `/start`  
-3. As admin, open settings → **Chat with Bot**  
-4. Fill Main Info, message destinations, catalogs  
-5. Invite the bot to your group/channel and grant admin if you post there  
+3. As admin, open settings → **Products** (`نام محصولات`) and add your products  
+4. Optionally enrich catalogs via folder/upload wizard  
+5. Fill Main Info, message destinations  
+6. Invite the bot to your group/channel and grant admin if you post there  
 
 ### Project layout
 
@@ -147,7 +155,7 @@ More projects: https://github.com/balckfoxgroup?tab=repositories
 خیلی از ربات‌های تلگرام فقط منوی خشک یا اسکریپت شکننده‌اند. **ربات Smart Support Bot** یک مغز پشتیبانی است که روی سرور خودت اجرا می‌شود:
 
 - پشتیبانی از **۴ زبان**: فارسی، انگلیسی، روسی، چینی
-- ساخت **کاتالوگ محصول** با کمک AI برای معرفی هر چیزی
+- ساخت و مدیریت **محصولات** از تنظیمات (نصب تازه خالی است)
 - پاسخ‌گویی با **سوال از AI** + دانش محلی + تشخیص نیت
 - امکان تغییر تنظیمات از داخل خود تلگرام با **گفتگو با ربات**
 - محافظت از تغییرات حساس با **بکاپ ← تأیید ← بازگردانی خودکار**
@@ -156,8 +164,15 @@ More projects: https://github.com/balckfoxgroup?tab=repositories
 
 ### قابلیت‌های مهم (حتماً امتحان کنید)
 
-#### ۱) ساخت کاتالوگ برای معرفی هر چیزی
-متن و عکس را در `knowledge/catalog_inbox/` بگذارید یا از ویزارد ادمین استفاده کنید. ربات کاتالوگ ساخت‌یافته می‌سازد تا Ask AI بتواند **هر محصول یا موضوعی** را درست معرفی کند — فقط مخصوص VPN نیست.
+#### ۱) منوی محصولات (پیش‌فرض خالی)
+نصب تازه **بدون محصول ازپیش‌تعریف‌شده** است. در تنظیمات گزینه **نام محصولات** را باز کنید:
+
+- هر تعداد محصول اضافه کنید (نام، ایموجی، خلاصه کوتاه)
+- هر وقت بخواهید ویرایش یا حذف کنید
+- هر محصول یک کلید در منوی اصلی و یک فایل `knowledge/product_catalogs/<id>.json` می‌شود
+- با **ساخت/تکمیل کاتالوگ** (یا ویزارد پوشه) محتوا و عکس غنی‌تر وصل کنید
+
+نمونهٔ JSON فقط در `knowledge/product_catalogs.examples/` است و وارد منو نمی‌شود.
 
 #### ۲) استفاده از AI در تمام قسمت‌ها
 چت خصوصی، پاسخ گروهی و مسیر منو همگی از یک موتور AI استفاده می‌کنند:
@@ -241,9 +256,10 @@ journalctl -u smart-support-bot.service -f
 
 1. ربات را در تلگرام باز کنید  
 2. دستور `/start` را بفرستید  
-3. با اکانت ادمین وارد تنظیمات شوید → **گفتگو با ربات**  
-4. اطلاعات اصلی، مقصد پیام‌ها و کاتالوگ را کامل کنید  
-5. ربات را به گروه/کانال اضافه کنید و در صورت نیاز ادمین بدهید  
+3. با اکانت ادمین وارد تنظیمات شوید → **نام محصولات** و محصول‌های خود را بسازید  
+4. در صورت نیاز کاتالوگ را با ویزارد پوشه/آپلود غنی کنید  
+5. اطلاعات اصلی و مقصد پیام‌ها را کامل کنید  
+6. ربات را به گروه/کانال اضافه کنید و در صورت نیاز ادمین بدهید  
 
 ### امنیت
 

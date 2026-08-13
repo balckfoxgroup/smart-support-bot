@@ -261,3 +261,183 @@ def ai_products_snippet(query: str, *, lang: str = "en", limit_chars: int = 4500
         blocks.append(chunk)
         used += len(chunk)
     return "\n\n".join(blocks)[:limit_chars]
+
+
+def slugify_product_id(name: str) -> str:
+    raw = (name or "").strip().lower()
+    raw = re.sub(r"[^\w\u0600-\u06ff]+", "-", raw, flags=re.UNICODE)
+    raw = re.sub(r"-{2,}", "-", raw).strip("-")
+    if not raw:
+        raw = "product"
+    # Prefer ASCII-ish ids for filenames; keep unicode letters if present.
+    ascii_only = re.sub(r"[^a-z0-9\-]+", "", raw)
+    return (ascii_only or "product")[:48]
+
+
+def _lang_map(text: str) -> dict[str, str]:
+    t = (text or "").strip()
+    return {code: t for code in SUPPORTED}
+
+
+def product_json_path(knowledge_root: Path, product_id: str) -> Path:
+    safe = slugify_product_id(product_id) if product_id else "product"
+    return product_catalogs_dir(knowledge_root) / f"{safe}.json"
+
+
+def list_product_files(knowledge_root: Path) -> list[Path]:
+    folder = product_catalogs_dir(knowledge_root)
+    if not folder.is_dir():
+        return []
+    return sorted(p for p in folder.glob("*.json") if p.is_file())
+
+
+def list_all_product_dicts(knowledge_root: Path) -> list[dict[str, Any]]:
+    """All catalog JSON files including disabled (for admin product manager)."""
+    out: list[dict[str, Any]] = []
+    for path in list_product_files(knowledge_root):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(data, dict):
+            data = dict(data)
+            data["_path"] = str(path)
+            out.append(data)
+    out.sort(key=lambda d: (int(d.get("menu_order") or 100), str(d.get("product_id") or "")))
+    return out
+
+
+def create_product_stub(
+    knowledge_root: Path,
+    *,
+    title: str,
+    emoji: str = "📦",
+    summary: str = "",
+    product_id: str | None = None,
+    menu_order: int | None = None,
+) -> ProductCatalog:
+    """Create a minimal enabled catalog JSON and reload cache."""
+    folder = product_catalogs_dir(knowledge_root)
+    folder.mkdir(parents=True, exist_ok=True)
+    pid = slugify_product_id(product_id or title)
+    path = folder / f"{pid}.json"
+    n = 1
+    base = pid
+    while path.exists():
+        n += 1
+        pid = f"{base}-{n}"
+        path = folder / f"{pid}.json"
+    order = menu_order
+    if order is None:
+        existing = load_product_catalogs(knowledge_root)
+        order = (max((p.menu_order for p in existing), default=0) + 10) if existing else 10
+    title_map = _lang_map(title)
+    summary_map = _lang_map(summary or title)
+    data = {
+        "schema_version": 1,
+        "catalog_id": pid,
+        "product_id": pid,
+        "enabled": True,
+        "menu_order": int(order),
+        "menu_emoji": (emoji or "📦").strip() or "📦",
+        "title": title_map,
+        "short_summary": summary_map,
+        "long_summary": summary_map,
+        "features": [],
+        "does_not": {code: [] for code in SUPPORTED},
+        "keywords": [title],
+        "media": [],
+        "support": {},
+    }
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    load_product_catalogs(knowledge_root)
+    found = get_product(pid)
+    if found is None:
+        raise RuntimeError(f"failed to load new product {pid}")
+    return found
+
+
+def update_product_fields(
+    knowledge_root: Path,
+    product_id: str,
+    *,
+    title: str | None = None,
+    emoji: str | None = None,
+    summary: str | None = None,
+    enabled: bool | None = None,
+    menu_order: int | None = None,
+) -> ProductCatalog:
+    path = product_catalogs_dir(knowledge_root) / f"{slugify_product_id(product_id)}.json"
+    # Also try exact id filename
+    alt = product_catalogs_dir(knowledge_root) / f"{product_id}.json"
+    if not path.is_file() and alt.is_file():
+        path = alt
+    if not path.is_file():
+        raise FileNotFoundError(product_id)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("invalid catalog json")
+    if title is not None:
+        data["title"] = _lang_map(title)
+        if not (summary or "").strip():
+            # keep summaries unless explicitly set
+            pass
+    if summary is not None:
+        sm = _lang_map(summary)
+        data["short_summary"] = sm
+        data["long_summary"] = sm
+    if emoji is not None:
+        data["menu_emoji"] = (emoji or "").strip() or data.get("menu_emoji") or "📦"
+    if enabled is not None:
+        data["enabled"] = bool(enabled)
+    if menu_order is not None:
+        data["menu_order"] = int(menu_order)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    load_product_catalogs(knowledge_root)
+    found = get_product(str(data.get("product_id") or product_id))
+    if found is None and not data.get("enabled", True):
+        # disabled products are filtered out of cache — rebuild a lightweight view
+        return ProductCatalog(
+            product_id=str(data.get("product_id") or product_id),
+            catalog_id=str(data.get("catalog_id") or product_id),
+            enabled=False,
+            menu_order=int(data.get("menu_order") or 100),
+            menu_emoji=str(data.get("menu_emoji") or ""),
+            title={k: str(v) for k, v in (data.get("title") or {}).items()},
+            short_summary={k: str(v) for k, v in (data.get("short_summary") or {}).items()},
+            long_summary={k: str(v) for k, v in (data.get("long_summary") or {}).items()},
+        )
+    if found is None:
+        raise RuntimeError(f"failed to reload product {product_id}")
+    return found
+
+
+def delete_product(knowledge_root: Path, product_id: str) -> bool:
+    folder = product_catalogs_dir(knowledge_root)
+    candidates = [
+        folder / f"{product_id}.json",
+        folder / f"{slugify_product_id(product_id)}.json",
+    ]
+    removed = False
+    for path in candidates:
+        if path.is_file():
+            path.unlink()
+            removed = True
+    load_product_catalogs(knowledge_root)
+    return removed
+
+
+def find_product_by_label(label: str, *, lang: str = "en") -> ProductCatalog | None:
+    needle = (label or "").strip()
+    if not needle:
+        return None
+    for cat in get_product_catalogs():
+        if cat.label(lang) == needle or cat.label("en") == needle or cat.label("fa") == needle:
+            return cat
+        if cat.product_id == needle:
+            return cat
+        titles = {str(v).strip() for v in cat.title.values()}
+        if needle in titles:
+            return cat
+    return None
+
