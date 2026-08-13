@@ -109,6 +109,7 @@ def main_menu_keyboard(
     ]
     for product in get_product_catalogs():
         rows.append([KeyboardButton(text=product.label(lang))])
+    rows.append([KeyboardButton(text=_label("contact", lang))])
     show_settings = can_settings if can_settings is not None else is_admin
     show_stats = can_stats if can_stats is not None else is_admin
     if show_settings and show_stats:

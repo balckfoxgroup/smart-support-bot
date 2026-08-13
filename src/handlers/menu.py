@@ -129,7 +129,7 @@ def setup_menu_router(
             creator = load_creator_contact(settings.knowledge_root)
             await message.answer(
                 creator.format_card(lang),
-                reply_markup=keyboards.installer_keyboard(lang),
+                reply_markup=await _menu_kb(),
             )
             return
 

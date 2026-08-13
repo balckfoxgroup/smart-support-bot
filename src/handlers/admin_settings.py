@@ -477,7 +477,7 @@ def setup_admin_settings_router(
             return
         uid = _uid(message)
         await users.set_ask_ai(uid, False)
-        await bot_settings.clear_session(uid)
+        await bot_settings.set_session(uid, {"mode": "settings"})
         await _clear_control(uid)
         await _show_settings_hub(message, lang, bot_settings)
 
@@ -620,6 +620,34 @@ def setup_admin_settings_router(
                 await message.answer(report[:3900], reply_markup=ak.stats_hub_keyboard(lang))
             return
 
+        # Contact Creator: public info. From Settings keep settings keyboard;
+        # from main menu let the public menu router answer.
+        if action == "creator_contact":
+            sess = await bot_settings.get_session(uid)
+            mode = str(sess.get("mode") or "")
+            in_settings = mode in {
+                "settings",
+                "owner",
+                "messages_hub",
+                "panel",
+                "backup",
+                "health",
+                "admins",
+                "products_hub",
+                "product_detail",
+                "catalog_wizard",
+                "bot_config_chat",
+            }
+            if await access.can_settings(uid) and in_settings:
+                from src.branding import load_creator_contact
+
+                await message.answer(
+                    load_creator_contact(settings.knowledge_root).format_card(lang),
+                    reply_markup=await _settings_kb(lang, bot_settings),
+                )
+                return
+            raise SkipHandler()
+
         ok, lang = await _require_settings(message)
         if not ok:
             return
@@ -627,7 +655,7 @@ def setup_admin_settings_router(
         await users.set_ask_ai(uid, False)
 
         if action == "settings_back":
-            await bot_settings.clear_session(uid)
+            await bot_settings.set_session(uid, {"mode": "settings"})
             await _clear_control(uid)
             await _show_settings_hub(message, lang, bot_settings)
             return
@@ -803,14 +831,6 @@ def setup_admin_settings_router(
             await bot_settings.set_session(uid, {"mode": "owner"})
             await message.answer(ak.msg("owner_hub", lang))
             await _show_owner(message, bot_settings, lang)
-            return
-
-        if action == "creator_contact":
-            creator = load_creator_contact(settings.knowledge_root)
-            await message.answer(
-                creator.format_card(lang),
-                reply_markup=await _settings_kb(lang, bot_settings),
-            )
             return
 
         if action == "bot_config_chat":
