@@ -9,6 +9,7 @@ from typing import Any
 
 from aiogram import F, Router
 from aiogram.dispatcher.event.bases import SkipHandler
+from aiogram.filters import Filter
 from aiogram.types import Message
 
 from src.access import AdminAccess
@@ -18,6 +19,13 @@ from src.branding import load_creator_contact
 from src.config import Settings
 from src.control.audit import AuditLog
 from src.control.service import ControlService
+from src.custom_buttons import (
+    ALLOWED_ACTIONS,
+    CustomButton,
+    action_catalog_help,
+    dispatch_custom_button,
+    new_button_id,
+)
 from src.health_report import build_health_report
 from src.knowledge.catalog_builder import build_one_catalog, prepare_work_folder
 from src.knowledge.product_catalogs import load_product_catalogs
@@ -30,6 +38,25 @@ from src.utils.chat_dest import validate_destination
 logger = logging.getLogger(__name__)
 
 router = Router(name="admin_settings")
+
+
+class _SettingsButtonFilter(Filter):
+    """Match built-in settings labels or runtime custom button labels."""
+
+    def __init__(self, static: set[str] | frozenset[str]) -> None:
+        self._static = frozenset(static)
+
+    async def __call__(self, message: Message) -> bool:
+        text = (message.text or "").strip()
+        if not text:
+            return False
+        return text in self._static or text in ak.custom_button_labels()
+
+
+async def _settings_kb(lang: str, store: BotSettingsStore):
+    customs = await store.list_custom_buttons(menu="settings")
+    ak.refresh_custom_button_labels(customs)
+    return ak.settings_hub_keyboard(lang, custom_buttons=customs)
 
 _TARGET_BY_ACTION = {
     "msg_channel": "channel",
@@ -139,8 +166,17 @@ async def _lang(users: UserStore, message: Message) -> str:
     return ak.ui_lang(code)
 
 
-async def _show_settings_hub(message: Message, lang: str) -> None:
-    await message.answer(ak.msg("settings_hub", lang), reply_markup=ak.settings_hub_keyboard(lang))
+async def _show_settings_hub(
+    message: Message, lang: str, bot_settings: BotSettingsStore | None = None
+) -> None:
+    customs: list = []
+    if bot_settings is not None:
+        customs = await bot_settings.list_custom_buttons(menu="settings")
+        ak.refresh_custom_button_labels(customs)
+    await message.answer(
+        ak.msg("settings_hub", lang),
+        reply_markup=ak.settings_hub_keyboard(lang, custom_buttons=customs),
+    )
 
 
 async def _show_messages_hub(message: Message, lang: str) -> None:
@@ -327,7 +363,7 @@ def setup_admin_settings_router(
         await users.set_ask_ai(uid, False)
         await bot_settings.clear_session(uid)
         await _clear_control(uid)
-        await _show_settings_hub(message, lang)
+        await _show_settings_hub(message, lang, bot_settings)
 
     button_texts = (
         ak.texts("settings_messages")
@@ -391,12 +427,35 @@ def setup_admin_settings_router(
         for v in ak.texts(src):
             button_texts |= {f"✅ {v}", f"⬜ {v}"}
 
-    @router.message(F.text.in_(button_texts))
+    @router.message(_SettingsButtonFilter(button_texts))
     async def on_settings_button(message: Message) -> None:
         uid = _uid(message)
         lang = await _lang(users, message)
         action = ak.resolve_action(message.text)
+
+        # Custom buttons (must run before empty-action return).
         if not action:
+            raw_btn = await bot_settings.find_custom_button_by_label(message.text or "")
+            if raw_btn:
+                ok, lang = await _require_settings(message)
+                if not ok:
+                    return
+                btn = CustomButton.from_dict(raw_btn)
+                if btn is None:
+                    return
+                await dispatch_custom_button(
+                    message,
+                    btn,
+                    lang=lang,
+                    settings=settings,
+                    bot_settings=bot_settings,
+                    show_owner=_show_owner,
+                    show_messages_hub=_show_messages_hub,
+                    show_panel=_show_panel,
+                    show_slot=_show_slot,
+                    show_settings_hub=_show_settings_hub,
+                )
+                return
             return
 
         # Health report is allowed for stats-only admins too.
@@ -421,7 +480,7 @@ def setup_admin_settings_router(
         if action == "settings_back":
             await bot_settings.clear_session(uid)
             await _clear_control(uid)
-            await _show_settings_hub(message, lang)
+            await _show_settings_hub(message, lang, bot_settings)
             return
 
         if action == "backup_settings":
@@ -505,11 +564,11 @@ def setup_admin_settings_router(
             slot_index = sess.get("slot_index")
             if mode in {"backup", "health", "admins", "catalog_wizard"}:
                 await bot_settings.clear_session(uid)
-                await _show_settings_hub(message, lang)
+                await _show_settings_hub(message, lang, bot_settings)
                 return
             if mode == "catalog_wizard":
                 await bot_settings.clear_session(uid)
-                await _show_settings_hub(message, lang)
+                await _show_settings_hub(message, lang, bot_settings)
                 return
             if mode in {"edit_slot", "scoped_rules_ai"} and target_key in TARGET_KEYS and slot_index is not None:
                 await bot_settings.set_session(
@@ -540,7 +599,7 @@ def setup_admin_settings_router(
                 return
             if mode in {"panel", "messages_hub", "bot_config_chat", "owner"}:
                 await bot_settings.clear_session(uid)
-                await _show_settings_hub(message, lang)
+                await _show_settings_hub(message, lang, bot_settings)
                 return
             raise SkipHandler()
 
@@ -571,7 +630,7 @@ def setup_admin_settings_router(
                 await bot_settings.set_session(uid, {"mode": "owner"})
                 await _show_owner(message, bot_settings, lang)
             else:
-                await _show_settings_hub(message, lang)
+                await _show_settings_hub(message, lang, bot_settings)
             return
 
         if action == "owner_info":
@@ -584,7 +643,7 @@ def setup_admin_settings_router(
             creator = load_creator_contact(settings.knowledge_root)
             await message.answer(
                 creator.format_card(lang),
-                reply_markup=ak.settings_hub_keyboard(lang),
+                reply_markup=await _settings_kb(lang, bot_settings),
             )
             return
 
@@ -617,7 +676,7 @@ def setup_admin_settings_router(
         if action in {"catalog_src_site", "catalog_src_channel", "catalog_src_group"}:
             sess = await bot_settings.get_session(uid)
             if sess.get("mode") != "catalog_wizard":
-                await _show_settings_hub(message, lang)
+                await _show_settings_hub(message, lang, bot_settings)
                 return
             sources = dict(sess.get("catalog_sources") or {})
             key = action.replace("catalog_src_", "")
@@ -630,7 +689,7 @@ def setup_admin_settings_router(
         if action == "catalog_run":
             sess = await bot_settings.get_session(uid)
             if sess.get("mode") != "catalog_wizard" or ai is None:
-                await _show_settings_hub(message, lang)
+                await _show_settings_hub(message, lang, bot_settings)
                 return
             sources = sess.get("catalog_sources") or {}
             folder_path = str(sess.get("catalog_path") or "").strip()
@@ -670,7 +729,7 @@ def setup_admin_settings_router(
                 return
             await message.answer(
                 ak.msg("catalog_done", lang).format(ids=pid),
-                reply_markup=ak.settings_hub_keyboard(lang),
+                reply_markup=await _settings_kb(lang, bot_settings),
             )
             await bot_settings.clear_session(uid)
             return
@@ -946,7 +1005,7 @@ def setup_admin_settings_router(
                 await bot_settings.update_health_settings(chat_id=text)
             else:
                 await bot_settings.clear_session(uid)
-                await _show_settings_hub(message, lang)
+                await _show_settings_hub(message, lang, bot_settings)
                 return
             await bot_settings.set_session(uid, {"mode": "health"})
             await message.answer(ak.msg("saved_ok", lang), reply_markup=ak.health_keyboard(lang))
@@ -975,7 +1034,7 @@ def setup_admin_settings_router(
                 await bot_settings.remove_admin(target_id)
             else:
                 await bot_settings.clear_session(uid)
-                await _show_settings_hub(message, lang)
+                await _show_settings_hub(message, lang, bot_settings)
                 return
             await audit.write(
                 "update_admin_role",
@@ -1011,7 +1070,7 @@ def setup_admin_settings_router(
                 "bot_display_name",
             }:
                 await bot_settings.clear_session(uid)
-                await _show_settings_hub(message, lang)
+                await _show_settings_hub(message, lang, bot_settings)
                 return
             owner = await bot_settings.update_owner(**{field: text})
             apply_owner_info(owner)
@@ -1170,11 +1229,34 @@ def setup_admin_settings_router(
                 return
 
             # Deterministic UI layout requests (do not depend on model inventing menus).
-            wants_two_cols = any(
-                x in text for x in ("دو ردیف", "دو ستون", "2 ستون", "2 ردیف", "two row", "two column")
-            ) or (
-                any(x in text for x in ("کوچیک", "کوچک", "compact", "small"))
-                and any(x in text for x in ("کلید", "دکمه", "کیبورد", "تنظیمات", "button", "keyboard"))
+            # Avoid treating "کلید بساز" as a layout request.
+            is_button_mgmt = any(
+                x in text
+                for x in (
+                    "کلید بساز",
+                    "دکمه بساز",
+                    "حذف کلید",
+                    "پاک کردن کلید",
+                    "لیست کلید",
+                    "add button",
+                    "create button",
+                    "remove button",
+                    "delete button",
+                    "list button",
+                )
+            )
+            wants_two_cols = (not is_button_mgmt) and (
+                any(
+                    x in text
+                    for x in ("دو ردیف", "دو ستون", "2 ستون", "2 ردیف", "two row", "two column")
+                )
+                or (
+                    any(x in text for x in ("کوچیک", "کوچک", "compact", "small"))
+                    and any(
+                        x in text
+                        for x in ("کلید", "دکمه", "کیبورد", "تنظیمات", "button", "keyboard")
+                    )
+                )
             )
             wants_one_col = any(
                 x in text for x in ("یک ردیف", "تک ستون", "1 ستون", "one column", "single column")
@@ -1198,7 +1280,137 @@ def setup_admin_settings_router(
                         "Telegram controls exact button width; two columns usually look more compact."
                     )
                 )
-                await message.answer(msg, reply_markup=ak.settings_hub_keyboard(lang))
+                await message.answer(msg, reply_markup=await _settings_kb(lang, bot_settings))
+                return
+
+            # Deterministic custom button add/remove/list (Persian + English cues).
+            wants_list_buttons = any(
+                x in text for x in ("لیست کلید", "کلیدهای سفارشی", "list button", "list custom")
+            )
+            wants_remove_button = any(
+                x in text for x in ("حذف کلید", "پاک کردن کلید", "remove button", "delete button")
+            )
+            wants_add_button = any(
+                x in text
+                for x in ("کلید بساز", "دکمه بساز", "اضافه کردن کلید", "add button", "create button")
+            )
+            if wants_list_buttons:
+                items = await bot_settings.list_custom_buttons(menu="settings")
+                if not items:
+                    body = "کلید سفارشی ندارید." if lang.startswith("fa") else "No custom buttons."
+                else:
+                    lines = []
+                    for b in items:
+                        lines.append(
+                            f"• {b.get('id')}: {b.get('label_fa') or b.get('label_en')} → {b.get('action')}"
+                        )
+                    body = "\n".join(lines)
+                await message.answer(
+                    body + "\n\n" + action_catalog_help(lang=lang),
+                    reply_markup=ak.cancel_keyboard(lang),
+                )
+                return
+            if wants_remove_button:
+                # Prefer explicit id=cb_xxx or quoted/remaining label text
+                bid = ""
+                label = ""
+                for token in text.replace("،", " ").split():
+                    if token.startswith("id=") or token.startswith("cb_"):
+                        bid = token.split("=", 1)[-1].strip()
+                # After keywords, take remaining as label if no id
+                for cue in ("حذف کلید", "پاک کردن کلید", "remove button", "delete button"):
+                    if cue in text:
+                        label = text.split(cue, 1)[-1].strip(" :-")
+                        break
+                removed = await bot_settings.remove_custom_button(button_id=bid, label=label)
+                if not removed:
+                    await message.answer(
+                        "کلیدی پیدا نشد. id یا متن دکمه را بفرستید."
+                        if lang.startswith("fa")
+                        else "Button not found. Send id or label.",
+                        reply_markup=ak.cancel_keyboard(lang),
+                    )
+                    return
+                await audit.write(
+                    "custom_button_remove",
+                    admin_id=uid,
+                    detail=str(removed.get("id")),
+                )
+                await bot_settings.set_session(uid, {"mode": "settings"})
+                await message.answer(
+                    ("✅ کلید حذف شد: " if lang.startswith("fa") else "✅ Removed: ")
+                    + str(removed.get("label_fa") or removed.get("id")),
+                    reply_markup=await _settings_kb(lang, bot_settings),
+                )
+                return
+            if wants_add_button:
+                # Lightweight parse: label + action=...
+                label_fa = ""
+                action_name = "noop_confirm"
+                params: dict[str, Any] = {}
+                # "کلید بساز: NAME — action=open_health"
+                chunk = text
+                for cue in ("کلید بساز", "دکمه بساز", "اضافه کردن کلید", "add button", "create button"):
+                    if cue in chunk:
+                        chunk = chunk.split(cue, 1)[-1].strip(" :-")
+                        break
+                # extract action=
+                parts = chunk.replace("—", " ").replace("–", " ").split()
+                label_bits: list[str] = []
+                for part in parts:
+                    if part.startswith("action="):
+                        action_name = part.split("=", 1)[1].strip()
+                    elif "=" in part and part.split("=", 1)[0] in {
+                        "target",
+                        "slot",
+                        "text",
+                        "menu",
+                    }:
+                        k, v = part.split("=", 1)
+                        params[k] = v
+                    else:
+                        label_bits.append(part)
+                label_fa = " ".join(label_bits).strip().strip("\"'«»")
+                if not label_fa:
+                    await message.answer(
+                        "نام کلید را هم بنویسید. مثال:\nکلید بساز: 🩺 سلامت سریع action=run_health_now\n\n"
+                        + action_catalog_help(lang=lang),
+                        reply_markup=ak.cancel_keyboard(lang),
+                    )
+                    return
+                if action_name not in ALLOWED_ACTIONS:
+                    await message.answer(
+                        "این عمل مجاز نیست.\n" + action_catalog_help(lang=lang),
+                        reply_markup=ak.cancel_keyboard(lang),
+                    )
+                    return
+                try:
+                    created = await bot_settings.add_custom_button(
+                        {
+                            "id": new_button_id(),
+                            "menu": str(params.pop("menu", "settings") or "settings"),
+                            "label_fa": label_fa,
+                            "label_en": label_fa,
+                            "enabled": True,
+                            "action": action_name,
+                            "params": params,
+                            "order": 50,
+                        }
+                    )
+                except ValueError as exc:
+                    await message.answer(f"❌ {exc}", reply_markup=ak.cancel_keyboard(lang))
+                    return
+                await audit.write(
+                    "custom_button_add",
+                    admin_id=uid,
+                    detail=f"{created.get('id')}:{created.get('action')}",
+                )
+                await bot_settings.set_session(uid, {"mode": "settings"})
+                await message.answer(
+                    ("✅ کلید ساخته شد و کار می‌کند:\n" if lang.startswith("fa") else "✅ Button created:\n")
+                    + f"{created.get('label_fa')} → {created.get('action')} ({created.get('id')})",
+                    reply_markup=await _settings_kb(lang, bot_settings),
+                )
                 return
 
             owner = await bot_settings.get_owner()
@@ -1219,39 +1431,40 @@ def setup_admin_settings_router(
 
             channel_brief = _slot_brief(channel.slots)
             support_brief = _slot_brief(support.slots)
+            customs = await bot_settings.list_custom_buttons(menu="settings")
+            customs_brief = [
+                f"{b.get('id')}:{b.get('label_fa')}->{b.get('action')}" for b in customs
+            ]
             prompt = (
                 "You are the Smart Support Bot settings operator for an ADMIN.\n"
-                "You can APPLY real changes with machine lines. Never invent fake menus "
-                "(no Button Size / Layout Columns screens — they do not exist).\n"
-                "Telegram button width is controlled only by packing buttons into 1 or 2 columns.\n"
-                "You CANNOT edit source code, deploy, or change creator contact from chat.\n"
-                "If the admin asks for source-code / programming changes, say clearly that "
-                "Cursor Agent + deploy is required — do not pretend you changed code.\n\n"
+                "You can APPLY real changes with machine lines. Never invent fake menus.\n"
+                "You can add/remove custom settings buttons bound to ALLOWED ready actions "
+                f"only: {sorted(ALLOWED_ACTIONS)}.\n"
+                "Custom buttons are real and runnable — never create a button without a valid action.\n"
+                "Do not mention Cursor/Deploy or source-code editing unless the admin asks for "
+                "an action outside the catalog; then list allowed actions instead.\n\n"
                 f"Current owner: {owner.to_dict()}\n"
                 f"Current UI: {ui}\n"
                 f"Current health: {health}\n"
                 f"Current panel: base_url={panel.base_url!r} port={panel.required_port} "
                 f"inbound={panel.inbound_id}\n"
                 f"Channel slots: {channel_brief}\n"
-                f"Account slots: {support_brief}\n\n"
+                f"Account slots: {support_brief}\n"
+                f"Custom buttons: {customs_brief}\n\n"
                 "When applying, end your reply with one or more lines exactly like:\n"
                 "APPLY_OWNER site_url=https://...\n"
-                "APPLY_OWNER channel=@name\n"
-                "APPLY_OWNER group=@name\n"
-                "APPLY_OWNER support_handle=@name\n"
-                "APPLY_OWNER bot_display_name=Smart Support Bot\n"
                 "APPLY_UI settings_columns=2\n"
                 "APPLY_HEALTH enabled=true\n"
-                "APPLY_HEALTH times=09:00\n"
-                "APPLY_HEALTH chat_id=@name_or_id\n"
                 "APPLY_PANEL base_url=https://...\n"
-                "APPLY_PANEL required_port=443\n"
-                "APPLY_PANEL inbound_id=1\n"
                 "APPLY_SLOT target=channel slot=2 enabled=true schedule=10:00,17:00 "
                 "chat_id=@blackFoxVPNN kind=news\n"
+                "APPLY_BUTTON_ADD label_fa=🩺 سلامت سریع label_en=🩺 Quick Health "
+                "action=run_health_now\n"
+                "APPLY_BUTTON_ADD label_fa=📢 تست کانال action=send_static_now "
+                "target=channel slot=1\n"
+                "APPLY_BUTTON_REMOVE id=cb_abc123\n"
+                "APPLY_BUTTON_REMOVE label=🩺 سلامت سریع\n"
                 "SHOW_SETTINGS_KEYBOARD\n\n"
-                "For 'make settings buttons smaller / two rows' use APPLY_UI settings_columns=2 "
-                "and SHOW_SETTINGS_KEYBOARD.\n"
                 "Reply short guidance in the admin language; keep APPLY_* lines at the end.\n\n"
                 f"Admin language hint: {lang}\n"
                 f"Admin request: {text}"
@@ -1396,6 +1609,63 @@ def setup_admin_settings_router(
                         await bot_settings.update_slot(target, idx, **updates)
                         applied.append(f"slot.{target}.{slot_no}")
                     continue
+                if line.startswith("APPLY_BUTTON_ADD "):
+                    body = line[len("APPLY_BUTTON_ADD ") :].strip()
+                    fields: dict[str, str] = {}
+                    # Support label_fa="..." with spaces via simple quote parse
+                    rest = body
+                    for key in ("label_fa", "label_en", "action", "menu", "target", "slot", "text"):
+                        marker = f"{key}="
+                        if marker not in rest:
+                            continue
+                        after = rest.split(marker, 1)[1]
+                        if after.startswith('"'):
+                            end = after.find('"', 1)
+                            val = after[1:end] if end > 0 else after.strip().split()[0]
+                        else:
+                            val = after.split()[0]
+                        fields[key] = val.strip()
+                    action_name = fields.get("action", "").strip()
+                    label_fa = fields.get("label_fa", "").strip()
+                    if action_name not in ALLOWED_ACTIONS or not label_fa:
+                        continue
+                    params: dict[str, Any] = {}
+                    for pk in ("target", "slot", "text"):
+                        if pk in fields:
+                            params[pk] = fields[pk]
+                    try:
+                        created = await bot_settings.add_custom_button(
+                            {
+                                "id": new_button_id(),
+                                "menu": fields.get("menu") or "settings",
+                                "label_fa": label_fa,
+                                "label_en": fields.get("label_en") or label_fa,
+                                "enabled": True,
+                                "action": action_name,
+                                "params": params,
+                                "order": 50,
+                            }
+                        )
+                        applied.append(f"button.add:{created.get('id')}")
+                        show_settings_kb = True
+                    except ValueError:
+                        continue
+                    continue
+                if line.startswith("APPLY_BUTTON_REMOVE "):
+                    body = line[len("APPLY_BUTTON_REMOVE ") :].strip()
+                    fields = {}
+                    for part in body.split():
+                        if "=" in part:
+                            k, v = part.split("=", 1)
+                            fields[k.strip()] = v.strip().strip('"')
+                    removed = await bot_settings.remove_custom_button(
+                        button_id=fields.get("id", ""),
+                        label=fields.get("label", ""),
+                    )
+                    if removed:
+                        applied.append(f"button.remove:{removed.get('id')}")
+                        show_settings_kb = True
+                    continue
 
             clean = "\n".join(
                 ln
@@ -1420,13 +1690,11 @@ def setup_admin_settings_router(
                     admin_id=uid,
                     detail=", ".join(applied)[:500],
                 )
-            kb = (
-                ak.settings_hub_keyboard(lang)
-                if show_settings_kb
-                else ak.cancel_keyboard(lang)
-            )
             if show_settings_kb:
                 await bot_settings.set_session(uid, {"mode": "settings"})
+                kb = await _settings_kb(lang, bot_settings)
+            else:
+                kb = ak.cancel_keyboard(lang)
             await message.answer(
                 (clean or ak.msg("saved_ok", lang))[:3900],
                 reply_markup=kb,

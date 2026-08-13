@@ -219,6 +219,7 @@ class BotSettingsStore:
             "ui": {
                 "settings_columns": 2,
             },
+            "custom_buttons": [],
             "admin_sessions": {},
             "version": 3,
         }
@@ -242,6 +243,7 @@ class BotSettingsStore:
                     {"enabled": True, "times": "09:00", "chat_id": ""},
                 )
                 self._data.setdefault("ui", {"settings_columns": 2})
+                self._data.setdefault("custom_buttons", [])
                 self._data.setdefault("admin_sessions", {})
                 # One-time structural migrate for older installs
                 if int(self._data.get("version") or 0) < 4:
@@ -785,6 +787,108 @@ class BotSettingsStore:
                 "settings_columns": 1 if int(cur.get("settings_columns") or 2) == 1 else 2
             }
 
+    async def list_custom_buttons(self, *, menu: str | None = "settings") -> list[dict[str, Any]]:
+        from src.custom_buttons import CustomButton
+
+        async with self._lock:
+            raw = self._data.get("custom_buttons")
+            items = raw if isinstance(raw, list) else []
+            out: list[dict[str, Any]] = []
+            for item in items:
+                btn = CustomButton.from_dict(item if isinstance(item, dict) else None)
+                if not btn or not btn.enabled:
+                    continue
+                if menu and btn.menu != menu:
+                    continue
+                out.append(btn.to_dict())
+            out.sort(key=lambda b: (int(b.get("order") or 100), str(b.get("id") or "")))
+            return out
+
+    async def find_custom_button_by_label(self, label: str) -> dict[str, Any] | None:
+        from src.custom_buttons import CustomButton
+
+        needle = (label or "").strip()
+        if not needle:
+            return None
+        async with self._lock:
+            raw = self._data.get("custom_buttons")
+            items = raw if isinstance(raw, list) else []
+            for item in items:
+                btn = CustomButton.from_dict(item if isinstance(item, dict) else None)
+                if not btn or not btn.enabled:
+                    continue
+                if needle in btn.labels():
+                    return btn.to_dict()
+        return None
+
+    async def add_custom_button(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from src.custom_buttons import ALLOWED_ACTIONS, ALLOWED_MENUS, CustomButton, new_button_id
+
+        btn = CustomButton.from_dict(payload)
+        if btn is None:
+            raise ValueError("invalid custom button")
+        if btn.action not in ALLOWED_ACTIONS:
+            raise ValueError(f"action not allowed: {btn.action}")
+        if btn.menu not in ALLOWED_MENUS:
+            raise ValueError(f"menu not allowed: {btn.menu}")
+        if not btn.id:
+            btn.id = new_button_id()
+        async with self._lock:
+            cur = self._data.setdefault("custom_buttons", [])
+            if not isinstance(cur, list):
+                cur = []
+                self._data["custom_buttons"] = cur
+            # Replace same id or same label
+            kept: list[Any] = []
+            for item in cur:
+                old = CustomButton.from_dict(item if isinstance(item, dict) else None)
+                if not old:
+                    continue
+                if old.id == btn.id:
+                    continue
+                if old.labels() & btn.labels():
+                    continue
+                kept.append(old.to_dict())
+            kept.append(btn.to_dict())
+            self._data["custom_buttons"] = kept
+            self._save_sync()
+            return btn.to_dict()
+
+    async def remove_custom_button(
+        self, *, button_id: str = "", label: str = ""
+    ) -> dict[str, Any] | None:
+        from src.custom_buttons import CustomButton
+
+        bid = (button_id or "").strip()
+        lab = (label or "").strip()
+        async with self._lock:
+            cur = self._data.get("custom_buttons")
+            items = cur if isinstance(cur, list) else []
+            kept: list[Any] = []
+            removed: dict[str, Any] | None = None
+            for item in items:
+                btn = CustomButton.from_dict(item if isinstance(item, dict) else None)
+                if not btn:
+                    continue
+                hit = False
+                if bid and btn.id == bid:
+                    hit = True
+                elif lab and lab in btn.labels():
+                    hit = True
+                if hit and removed is None:
+                    removed = btn.to_dict()
+                    continue
+                kept.append(btn.to_dict())
+            if removed is not None:
+                self._data["custom_buttons"] = kept
+                self._save_sync()
+            return removed
+
+    async def list_all_custom_buttons_raw(self) -> list[dict[str, Any]]:
+        async with self._lock:
+            raw = self._data.get("custom_buttons")
+            return list(raw) if isinstance(raw, list) else []
+
     async def export_backup(self) -> dict[str, Any]:
         """Export settings (panel token decrypted). Sessions excluded."""
         from datetime import datetime, timezone
@@ -824,6 +928,7 @@ class BotSettingsStore:
                     if int((self._data.get("ui") or {}).get("settings_columns") or 2) == 1
                     else 2
                 },
+                "custom_buttons": deepcopy(self._data.get("custom_buttons") or []),
             }
 
     async def import_backup(self, payload: dict[str, Any]) -> list[str]:
@@ -886,6 +991,16 @@ class BotSettingsStore:
                 cols = int(payload["ui"].get("settings_columns") or 2)
                 self._data["ui"] = {"settings_columns": 1 if cols == 1 else 2}
                 applied.append("ui")
+            if isinstance(payload.get("custom_buttons"), list):
+                from src.custom_buttons import CustomButton
+
+                cleaned: list[dict[str, Any]] = []
+                for item in payload["custom_buttons"]:
+                    btn = CustomButton.from_dict(item if isinstance(item, dict) else None)
+                    if btn:
+                        cleaned.append(btn.to_dict())
+                self._data["custom_buttons"] = cleaned
+                applied.append("custom_buttons")
             if applied:
                 self._data["version"] = max(int(self._data.get("version") or 0), 3)
                 self._save_sync()

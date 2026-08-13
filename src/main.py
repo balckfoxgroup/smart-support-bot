@@ -120,6 +120,8 @@ async def run() -> None:
     from src.ui import admin_keyboards as ak
 
     ak.set_settings_columns(int(ui_prefs.get("settings_columns") or 2))
+    customs = await bot_settings.list_custom_buttons(menu="settings")
+    ak.refresh_custom_button_labels(customs)
     access = AdminAccess(settings, bot_settings)
 
     knowledge = KnowledgeLoader(settings)

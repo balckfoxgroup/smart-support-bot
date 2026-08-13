@@ -130,8 +130,17 @@ async def _show_stats_hub(message: Message, lang: str) -> None:
     await message.answer(ak.msg("stats_hub", lang), reply_markup=ak.stats_hub_keyboard(lang))
 
 
-async def _show_settings_hub(message: Message, lang: str) -> None:
-    await message.answer(ak.msg("settings_hub", lang), reply_markup=ak.settings_hub_keyboard(lang))
+async def _show_settings_hub(
+    message: Message, lang: str, bot_settings: BotSettingsStore | None = None
+) -> None:
+    customs: list = []
+    if bot_settings is not None:
+        customs = await bot_settings.list_custom_buttons(menu="settings")
+        ak.refresh_custom_button_labels(customs)
+    await message.answer(
+        ak.msg("settings_hub", lang),
+        reply_markup=ak.settings_hub_keyboard(lang, custom_buttons=customs),
+    )
 
 
 def setup_admin_control_router(
@@ -321,7 +330,7 @@ def setup_admin_control_router(
 
         if action == "settings_back":
             await control.registry.clear_session(uid)
-            await _show_settings_hub(message, lang)
+            await _show_settings_hub(message, lang, bot_settings)
             return
 
         if action == "nav_back":

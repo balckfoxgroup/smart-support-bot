@@ -8,6 +8,7 @@ Lang = str
 
 # Runtime UI preference (1 or 2 columns). Loaded from bot_settings on start / APPLY_UI.
 _settings_columns: int = 2
+_custom_button_labels: set[str] = set()
 
 
 def set_settings_columns(columns: int) -> int:
@@ -18,6 +19,25 @@ def set_settings_columns(columns: int) -> int:
 
 def get_settings_columns() -> int:
     return 1 if _settings_columns == 1 else 2
+
+
+def refresh_custom_button_labels(buttons: list[dict] | None) -> set[str]:
+    """Keep filter cache in sync with stored custom buttons."""
+    global _custom_button_labels
+    labels: set[str] = set()
+    for item in buttons or []:
+        if not isinstance(item, dict):
+            continue
+        for key in ("label_fa", "label_en"):
+            val = str(item.get(key) or "").strip()
+            if val:
+                labels.add(val)
+    _custom_button_labels = labels
+    return labels
+
+
+def custom_button_labels() -> frozenset[str]:
+    return frozenset(_custom_button_labels)
 
 
 def _chunk_rows(buttons: list[KeyboardButton], cols: int | None = None) -> list[list[KeyboardButton]]:
@@ -510,9 +530,8 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
             "• اسلات پیام‌ها (مقصد، زمان، روشن/خاموش، نوع)\n"
             "• پنل (آدرس/پورت/Inbound)\n"
             "• سلامت روزانه\n"
-            "• ظاهر کیبورد تنظیمات (۱ یا ۲ ستونه)\n\n"
-            "نمی‌توانم از داخل تلگرام کد سورس را عوض کنم؛ برای تغییر کد از Cursor/Deploy استفاده کنید.\n"
-            "تماس با سازنده قفل است.\n"
+            "• ظاهر کیبورد تنظیمات (۱ یا ۲ ستونه)\n"
+            "• ساخت/حذف کلید سفارشی روی منوی تنظیمات (با عمل آماده)\n\n"
             "برای پایان: بازگشت به تنظیمات."
         ),
         "en": (
@@ -522,9 +541,8 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
             "• Message slots (dest, schedule, on/off, kind)\n"
             "• Panel (URL/port/inbound)\n"
             "• Daily health\n"
-            "• Settings keyboard layout (1 or 2 columns)\n\n"
-            "I cannot edit source code from Telegram; use Cursor/Deploy for code.\n"
-            "Creator contact is locked.\n"
+            "• Settings keyboard layout (1 or 2 columns)\n"
+            "• Add/remove custom settings buttons (bound to ready actions)\n\n"
             "To exit: Back to Settings."
         ),
     },
@@ -807,10 +825,15 @@ def all_admin_control_texts() -> frozenset[str]:
         for v in table.values():
             out.add("✅ " + v)
             out.add("⬜ " + v)
+    out.update(_custom_button_labels)
     return frozenset(out)
 
 
-def settings_hub_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+def settings_hub_keyboard(
+    lang: str | None = "en",
+    *,
+    custom_buttons: list[dict] | None = None,
+) -> ReplyKeyboardMarkup:
     buttons = [
         KeyboardButton(text=label("owner_info", lang)),
         KeyboardButton(text=label("bot_config_chat", lang)),
@@ -822,8 +845,18 @@ def settings_hub_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
         KeyboardButton(text=label("health_status", lang)),
         KeyboardButton(text=label("manage_admins", lang)),
         KeyboardButton(text=label("creator_contact", lang)),
-        KeyboardButton(text=label("stats_back", lang)),
     ]
+    fa = (lang or "").startswith("fa")
+    for item in custom_buttons or []:
+        if not isinstance(item, dict) or not item.get("enabled", True):
+            continue
+        txt = str(item.get("label_fa") if fa else item.get("label_en") or "").strip()
+        if not txt:
+            txt = str(item.get("label_fa") or item.get("label_en") or "").strip()
+        if txt:
+            buttons.append(KeyboardButton(text=txt))
+    buttons.append(KeyboardButton(text=label("stats_back", lang)))
+    refresh_custom_button_labels(custom_buttons)
     return ReplyKeyboardMarkup(
         keyboard=_chunk_rows(buttons),
         resize_keyboard=True,
