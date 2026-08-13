@@ -928,21 +928,19 @@ def setup_admin_settings_router(
             return
 
         if action == "build_catalogs":
-            staging = _staging_dir(settings, uid)
-            if staging.exists():
-                shutil.rmtree(staging, ignore_errors=True)
-            staging.mkdir(parents=True, exist_ok=True)
-            await bot_settings.set_session(
-                uid,
-                {
-                    "mode": "catalog_wizard",
-                    "catalog_sources": {"site": False, "channel": False, "group": False},
-                    "catalog_path": "",
-                    "catalog_staging": str(staging),
-                },
+            # Legacy entry: catalog build now lives under Products.
+            await bot_settings.set_session(uid, {"mode": "products_hub"})
+            tip = (
+                "ساخت کاتالوگ از مسیر «نام محصولات» انجام می‌شود.\n"
+                "محصول را انتخاب کنید و «ساخت/تکمیل کاتالوگ» را بزنید."
+                if (lang or "").startswith("fa")
+                else (
+                    "Catalog build is under Products.\n"
+                    "Select a product, then tap Build / Enrich Catalog."
+                )
             )
-            await _show_catalog_wizard(message, bot_settings, uid, lang)
-            await message.answer(ak.msg("catalog_ask_path", lang))
+            await message.answer(tip)
+            await _show_products_hub(message, settings, lang)
             return
 
         if action in {"catalog_src_site", "catalog_src_channel", "catalog_src_group"}:

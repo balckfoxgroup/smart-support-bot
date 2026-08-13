@@ -483,8 +483,7 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
             "⚙️ تنظیمات\n\n"
             "• 📋 اطلاعات اصلی (سایت/کانال/گروه/پشتیبانی)\n"
             "• 💬 گفتگو با ربات (کل تنظیمات)\n"
-            "• 🏷 نام محصولات (افزودن/ویرایش/حذف)\n"
-            "• 📦 ساخت کاتالوگ از پوشه\n"
+            "• 🏷 نام محصولات (افزودن/ویرایش/حذف و کاتالوگ)\n"
             "• 📝 ایجنت و API / 📨 پیام‌ها / 🖥 پنل\n"
             "• 🛠 تماس با سازنده (قفل)"
         ),
@@ -492,8 +491,7 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
             "⚙️ Settings\n\n"
             "• 📋 Main Info (site/channel/group/support)\n"
             "• 💬 Chat With Bot (whole bot)\n"
-            "• 🏷 Products (add/edit/delete)\n"
-            "• 📦 Build catalogs from folder\n"
+            "• 🏷 Products (add/edit/delete and catalogs)\n"
             "• 📝 Agents & API / 📨 Messages / 🖥 Panel\n"
             "• 🛠 Contact Creator (locked)"
         ),
@@ -992,7 +990,6 @@ def settings_hub_keyboard(
             "owner_info",
             "bot_config_chat",
             "products_hub",
-            "build_catalogs",
             "change_agent_api",
             "settings_messages",
             "settings_panel",

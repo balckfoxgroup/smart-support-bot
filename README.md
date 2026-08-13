@@ -32,7 +32,7 @@ Fresh installs ship with **no pre-filled products**. In Settings open **Products
 - Add any number of products (name, emoji, short summary)
 - Edit or delete products anytime
 - Each product becomes a main-menu key and a `knowledge/product_catalogs/<id>.json` file
-- Use **Build / Enrich Catalog** (or the folder wizard) to attach richer content and photos
+- Use **Build / Enrich Catalog** on a product to attach richer content and photos
 
 Sample JSON lives only under `knowledge/product_catalogs.examples/` (not loaded into the menu).
 
