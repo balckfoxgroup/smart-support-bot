@@ -37,6 +37,7 @@ class ApplyResult:
     show_settings_keyboard: bool = False
     status_dump: str | None = None
     errors: list[str] = field(default_factory=list)
+    safe_change_queued: dict[str, Any] | None = None
 
 
 def parse_kv_tokens(body: str) -> dict[str, str]:
@@ -152,6 +153,10 @@ def operator_system_prompt() -> str:
         "Creator contact is view-only (OPEN_SECTION creator is ok; never APPLY it).\n"
         "For brand-new button behavior that needs new code, tell admin to say "
         "'کلید بساز: …' (that path uses safe-change). For settings edits use APPLY_*.\n"
+        "System (hardcoded) buttons can be removed/restored/renamed with "
+        "APPLY_SYSTEM_BUTTON (safe-change + ~1 min rollback). Locked nav buttons "
+        "cannot change: cancel, nav_back, settings_back, stats_back, bot_config_chat, "
+        "creator_contact, settings, bot_stats.\n"
     )
 
 
@@ -168,6 +173,8 @@ def operator_command_help() -> str:
         "APPLY_ADMIN action=add|remove|set_role user_id=123456 role=full|stats\n"
         "APPLY_BUTTON_ADD label_fa=... label_en=... action=run_health_now target=channel slot=1\n"
         "APPLY_BUTTON_REMOVE id=cb_xxx OR label=...\n"
+        "APPLY_SYSTEM_BUTTON op=remove|restore|rename id=health_status menu=stats "
+        "label_fa=... label_en=...\n"
         "OPEN_SECTION settings|owner|messages|panel|health|backup|admins|"
         "channel|group|account|test|control\n"
         "SHOW_STATUS\n"
@@ -391,7 +398,62 @@ async def apply_operator_lines(
                 result.applied.append(f"button.remove:{removed.get('id')}")
                 result.show_settings_keyboard = True
             else:
-                result.errors.append("button not found")
+                # Fall back: system hardcoded button via safe-change layout
+                from src.ui.system_layout import match_system_button, queue_system_button_change
+
+                hit = match_system_button(
+                    label=fields.get("label", ""),
+                    button_id=fields.get("id", ""),
+                    menu=(fields.get("menu") or "").strip() or None,
+                    labels_table=ak._LABELS,
+                )
+                if hit:
+                    action_id, menu = hit
+                    queued = queue_system_button_change(
+                        op="remove",
+                        action=action_id,
+                        menu=menu,
+                        description=f"Remove system button {action_id} from {menu}",
+                    )
+                    if queued.get("ok"):
+                        result.applied.append(f"system_button.remove:{action_id}@{menu}")
+                        result.safe_change_queued = queued
+                    else:
+                        result.errors.append(str(queued.get("error") or "system button remove failed"))
+                else:
+                    result.errors.append("button not found")
+            continue
+
+        if line.startswith("APPLY_SYSTEM_BUTTON "):
+            from src.ui.system_layout import match_system_button, queue_system_button_change
+
+            fields = parse_kv_tokens(line[len("APPLY_SYSTEM_BUTTON ") :])
+            op = (fields.get("op") or "remove").strip().lower()
+            menu = (fields.get("menu") or "").strip()
+            action_id = (fields.get("id") or "").strip()
+            if not action_id and fields.get("label"):
+                hit = match_system_button(
+                    label=fields.get("label", ""),
+                    menu=menu or None,
+                    labels_table=ak._LABELS,
+                )
+                if hit:
+                    action_id, menu = hit
+            if not action_id or not menu:
+                result.errors.append("APPLY_SYSTEM_BUTTON needs id+menu (or label+menu)")
+                continue
+            queued = queue_system_button_change(
+                op=op,
+                action=action_id,
+                menu=menu,
+                label_fa=fields.get("label_fa", ""),
+                label_en=fields.get("label_en", ""),
+            )
+            if queued.get("ok"):
+                result.applied.append(f"system_button.{op}:{action_id}@{menu}")
+                result.safe_change_queued = queued
+            else:
+                result.errors.append(str(queued.get("error") or "system button change failed"))
             continue
 
     return result

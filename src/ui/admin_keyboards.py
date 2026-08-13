@@ -811,8 +811,13 @@ def ui_lang(lang: str | None) -> Lang:
 
 
 def label(action: str, lang: str | None) -> str:
-    table = _LABELS[action]
+    from src.ui.system_layout import rename_for
+
+    ren = rename_for(action)
     code = ui_lang(lang)
+    if ren:
+        return ren.get(code) or ren.get("en") or ren.get("fa") or ""
+    table = _LABELS[action]
     return table.get(code) or table["en"]
 
 
@@ -823,8 +828,15 @@ def msg(key: str, lang: str | None) -> str:
 
 
 def texts(action: str) -> frozenset[str]:
+    from src.ui.system_layout import rename_for
+
     table = _LABELS[action]
-    return frozenset(table.values())
+    out = set(table.values())
+    ren = rename_for(action)
+    if ren:
+        out.update({ren.get("fa") or "", ren.get("en") or ""})
+        out.discard("")
+    return frozenset(out)
 
 
 def resolve_action(text: str | None) -> str | None:
@@ -835,6 +847,14 @@ def resolve_action(text: str | None) -> str | None:
         if needle.startswith(prefix):
             needle = needle[len(prefix) :].strip()
             break
+    from src.ui.system_layout import load_layout
+
+    layout = load_layout()
+    for action, lab in (layout.get("renames") or {}).items():
+        if not isinstance(lab, dict):
+            continue
+        if needle in {str(lab.get("fa") or "").strip(), str(lab.get("en") or "").strip()}:
+            return str(action)
     for action, table in _LABELS.items():
         if needle in table.values():
             if action.endswith("_legacy"):
@@ -845,6 +865,12 @@ def resolve_action(text: str | None) -> str | None:
                 return "msg_account"
             return action
     return None
+
+
+def _kb_buttons(menu: str, actions: list[str], lang: str | None) -> list[KeyboardButton]:
+    from src.ui.system_layout import filter_actions
+
+    return [KeyboardButton(text=label(a, lang)) for a in filter_actions(menu, actions)]
 
 
 def all_admin_control_texts() -> frozenset[str]:
@@ -865,18 +891,22 @@ def settings_hub_keyboard(
     custom_buttons: list[dict] | None = None,
     generated_buttons: list[dict] | None = None,
 ) -> ReplyKeyboardMarkup:
-    buttons = [
-        KeyboardButton(text=label("owner_info", lang)),
-        KeyboardButton(text=label("bot_config_chat", lang)),
-        KeyboardButton(text=label("build_catalogs", lang)),
-        KeyboardButton(text=label("change_agent_api", lang)),
-        KeyboardButton(text=label("settings_messages", lang)),
-        KeyboardButton(text=label("settings_panel", lang)),
-        KeyboardButton(text=label("backup_settings", lang)),
-        KeyboardButton(text=label("health_status", lang)),
-        KeyboardButton(text=label("manage_admins", lang)),
-        KeyboardButton(text=label("creator_contact", lang)),
-    ]
+    buttons = _kb_buttons(
+        "settings",
+        [
+            "owner_info",
+            "bot_config_chat",
+            "build_catalogs",
+            "change_agent_api",
+            "settings_messages",
+            "settings_panel",
+            "backup_settings",
+            "health_status",
+            "manage_admins",
+            "creator_contact",
+        ],
+        lang,
+    )
     buttons.extend(
         merge_settings_extra_buttons(
             lang=lang,
@@ -884,7 +914,7 @@ def settings_hub_keyboard(
             generated_buttons=generated_buttons,
         )
     )
-    buttons.append(KeyboardButton(text=label("stats_back", lang)))
+    buttons.extend(_kb_buttons("settings", ["stats_back"], lang))
     refresh_custom_button_labels(list(custom_buttons or []) + list(generated_buttons or []))
     return ReplyKeyboardMarkup(
         keyboard=_chunk_rows(buttons),
@@ -895,11 +925,11 @@ def settings_hub_keyboard(
 
 
 def backup_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
-    buttons = [
-        KeyboardButton(text=label("backup_export", lang)),
-        KeyboardButton(text=label("backup_import", lang)),
-        KeyboardButton(text=label("settings_back", lang)),
-    ]
+    buttons = _kb_buttons(
+        "backup",
+        ["backup_export", "backup_import", "settings_back"],
+        lang,
+    )
     return ReplyKeyboardMarkup(
         keyboard=_chunk_rows(buttons),
         resize_keyboard=True,
@@ -908,13 +938,11 @@ def backup_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
 
 
 def health_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
-    buttons = [
-        KeyboardButton(text=label("health_status", lang)),
-        KeyboardButton(text=label("health_toggle", lang)),
-        KeyboardButton(text=label("health_times", lang)),
-        KeyboardButton(text=label("health_chat", lang)),
-        KeyboardButton(text=label("settings_back", lang)),
-    ]
+    buttons = _kb_buttons(
+        "health",
+        ["health_status", "health_toggle", "health_times", "health_chat", "settings_back"],
+        lang,
+    )
     return ReplyKeyboardMarkup(
         keyboard=_chunk_rows(buttons),
         resize_keyboard=True,
@@ -923,12 +951,11 @@ def health_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
 
 
 def admins_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
-    buttons = [
-        KeyboardButton(text=label("admin_role_full", lang)),
-        KeyboardButton(text=label("admin_role_stats", lang)),
-        KeyboardButton(text=label("admin_remove", lang)),
-        KeyboardButton(text=label("settings_back", lang)),
-    ]
+    buttons = _kb_buttons(
+        "admins",
+        ["admin_role_full", "admin_role_stats", "admin_remove", "settings_back"],
+        lang,
+    )
     return ReplyKeyboardMarkup(
         keyboard=_chunk_rows(buttons),
         resize_keyboard=True,
@@ -937,11 +964,11 @@ def admins_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
 
 
 def stats_hub_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
-    buttons = [
-        KeyboardButton(text=label("stats_report", lang)),
-        KeyboardButton(text=label("health_status", lang)),
-        KeyboardButton(text=label("stats_back", lang)),
-    ]
+    buttons = _kb_buttons(
+        "stats",
+        ["stats_report", "health_status", "stats_back"],
+        lang,
+    )
     return ReplyKeyboardMarkup(
         keyboard=_chunk_rows(buttons),
         resize_keyboard=True,
@@ -951,14 +978,18 @@ def stats_hub_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
 
 
 def owner_info_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
-    buttons = [
-        KeyboardButton(text=label("owner_bot_name", lang)),
-        KeyboardButton(text=label("owner_site", lang)),
-        KeyboardButton(text=label("owner_channel", lang)),
-        KeyboardButton(text=label("owner_group", lang)),
-        KeyboardButton(text=label("owner_support", lang)),
-        KeyboardButton(text=label("settings_back", lang)),
-    ]
+    buttons = _kb_buttons(
+        "owner",
+        [
+            "owner_bot_name",
+            "owner_site",
+            "owner_channel",
+            "owner_group",
+            "owner_support",
+            "settings_back",
+        ],
+        lang,
+    )
     return ReplyKeyboardMarkup(
         keyboard=_chunk_rows(buttons),
         resize_keyboard=True,
@@ -967,13 +998,11 @@ def owner_info_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
 
 
 def messages_hub_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
-    buttons = [
-        KeyboardButton(text=label("msg_channel", lang)),
-        KeyboardButton(text=label("msg_group", lang)),
-        KeyboardButton(text=label("msg_account", lang)),
-        KeyboardButton(text=label("msg_test", lang)),
-        KeyboardButton(text=label("settings_back", lang)),
-    ]
+    buttons = _kb_buttons(
+        "messages",
+        ["msg_channel", "msg_group", "msg_account", "msg_test", "settings_back"],
+        lang,
+    )
     return ReplyKeyboardMarkup(
         keyboard=_chunk_rows(buttons),
         resize_keyboard=True,
@@ -1046,13 +1075,17 @@ def slot_edit_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
 
 
 def panel_edit_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
-    buttons = [
-        KeyboardButton(text=label("edit_panel_url", lang)),
-        KeyboardButton(text=label("edit_panel_token", lang)),
-        KeyboardButton(text=label("edit_panel_port", lang)),
-        KeyboardButton(text=label("edit_panel_inbound", lang)),
-        KeyboardButton(text=label("settings_back", lang)),
-    ]
+    buttons = _kb_buttons(
+        "panel",
+        [
+            "edit_panel_url",
+            "edit_panel_token",
+            "edit_panel_port",
+            "edit_panel_inbound",
+            "settings_back",
+        ],
+        lang,
+    )
     return ReplyKeyboardMarkup(
         keyboard=_chunk_rows(buttons),
         resize_keyboard=True,

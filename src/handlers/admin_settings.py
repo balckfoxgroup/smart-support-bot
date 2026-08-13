@@ -1279,11 +1279,14 @@ def setup_admin_settings_router(
                     "دکمه بساز",
                     "حذف کلید",
                     "پاک کردن کلید",
+                    "برگرداندن کلید",
+                    "بازگردانی کلید",
                     "لیست کلید",
                     "add button",
                     "create button",
                     "remove button",
                     "delete button",
+                    "restore button",
                     "list button",
                 )
             )
@@ -1338,10 +1341,17 @@ def setup_admin_settings_router(
             )
             if wants_list_buttons:
                 from src.generated.buttons import list_generated_buttons
+                from src.ui.system_layout import list_system_buttons_brief
 
                 gen_items = list_generated_buttons(menu="settings", refresh=True)
                 cat_items = await bot_settings.list_custom_buttons(menu="settings")
                 lines: list[str] = []
+                lines.append(
+                    "—— کلیدهای سیستم (قابل حذف با safe-change؛ 🔒 قفل) ——"
+                    if lang.startswith("fa")
+                    else "—— System buttons (safe-change; 🔒 locked) ——"
+                )
+                lines.append(list_system_buttons_brief(labels_table=ak._LABELS))
                 if gen_items:
                     lines.append("—— کلیدهای کدنویسی‌شده (AI) ——" if lang.startswith("fa") else "—— AI-coded buttons ——")
                     for b in gen_items:
@@ -1354,15 +1364,17 @@ def setup_admin_settings_router(
                         lines.append(
                             f"• {b.get('id')}: {b.get('label_fa') or b.get('label_en')} → {b.get('action')}"
                         )
-                if not lines:
-                    body = "کلید سفارشی ندارید." if lang.startswith("fa") else "No custom buttons."
-                else:
-                    body = "\n".join(lines)
+                body = "\n".join(lines)
                 await message.answer(body[:3900], reply_markup=ak.cancel_keyboard(lang))
                 return
             if wants_remove_button:
                 from src.button_codegen import queue_generated_button_remove
                 from src.generated.buttons import list_generated_buttons
+                from src.ui.system_layout import (
+                    match_system_button,
+                    queue_system_button_change,
+                    resolve_menu_hint,
+                )
 
                 bid = ""
                 label = ""
@@ -1414,24 +1426,131 @@ def setup_admin_settings_router(
                     )
                     return
                 removed = await bot_settings.remove_custom_button(button_id=bid, label=label)
-                if not removed:
+                if removed:
+                    await audit.write(
+                        "custom_button_remove",
+                        admin_id=uid,
+                        detail=str(removed.get("id")),
+                    )
+                    await bot_settings.set_session(uid, {"mode": "settings"})
                     await message.answer(
-                        "کلیدی پیدا نشد. id یا متن دکمه را بفرستید."
-                        if lang.startswith("fa")
-                        else "Button not found. Send id or label.",
+                        ("✅ کلید حذف شد: " if lang.startswith("fa") else "✅ Removed: ")
+                        + str(removed.get("label_fa") or removed.get("id")),
+                        reply_markup=await _settings_kb(lang, bot_settings),
+                    )
+                    return
+                # System / hardcoded buttons (e.g. وضعیت سلامت on آمار)
+                menu_hint = resolve_menu_hint(text)
+                sys_hit = match_system_button(
+                    label=label,
+                    button_id=bid,
+                    menu=menu_hint,
+                    labels_table=ak._LABELS,
+                )
+                if sys_hit:
+                    action_id, menu = sys_hit
+                    result = queue_system_button_change(
+                        op="remove",
+                        action=action_id,
+                        menu=menu,
+                        description=f"Remove system button {action_id} from {menu}",
+                        admin_chat_id=uid,
+                    )
+                    if not result.get("ok"):
+                        await message.answer(
+                            f"❌ {result.get('error')}",
+                            reply_markup=ak.cancel_keyboard(lang),
+                        )
+                        return
+                    await audit.write(
+                        "system_button_remove_queued",
+                        admin_id=uid,
+                        detail=f"{action_id}@{menu}:{result.get('change_id')}",
+                    )
+                    await message.answer(
+                        (
+                            f"🛡 حذف کلید سیستم `{action_id}` از منوی `{menu}` در صف safe-change است.\n"
+                            f"change: `{result.get('change_id')}`\n"
+                            "ربات ری‌استارت می‌شود؛ حدود ۱ دقیقه فرصت چک دارید، بعد پیام تأیید می‌آید.\n"
+                            "اگر خراب شد و تأیید نکنید، خودکار برمی‌گردد."
+                            if lang.startswith("fa")
+                            else (
+                                f"🛡 System button `{action_id}` removal from `{menu}` queued.\n"
+                                f"change: `{result.get('change_id')}`\n"
+                                "Bot restarts; ~1 min observe, then confirm. No confirm → rollback."
+                            )
+                        ),
                         reply_markup=ak.cancel_keyboard(lang),
                     )
                     return
-                await audit.write(
-                    "custom_button_remove",
-                    admin_id=uid,
-                    detail=str(removed.get("id")),
-                )
-                await bot_settings.set_session(uid, {"mode": "settings"})
                 await message.answer(
-                    ("✅ کلید حذف شد: " if lang.startswith("fa") else "✅ Removed: ")
-                    + str(removed.get("label_fa") or removed.get("id")),
-                    reply_markup=await _settings_kb(lang, bot_settings),
+                    "کلیدی پیدا نشد. id یا متن دکمه را بفرستید (مثلاً: حذف کلید وضعیت سلامت از آمار)."
+                    if lang.startswith("fa")
+                    else "Button not found. Send id or label (e.g. delete button Health Status from stats).",
+                    reply_markup=ak.cancel_keyboard(lang),
+                )
+                return
+            # Restore system button
+            wants_restore_button = any(
+                x in text
+                for x in ("برگرداندن کلید", "بازگردانی کلید", "restore button", "undelete button")
+            )
+            if wants_restore_button:
+                from src.ui.system_layout import (
+                    match_system_button,
+                    queue_system_button_change,
+                    resolve_menu_hint,
+                )
+
+                label = ""
+                for cue in (
+                    "برگرداندن کلید",
+                    "بازگردانی کلید",
+                    "restore button",
+                    "undelete button",
+                ):
+                    if cue in text:
+                        label = text.split(cue, 1)[-1].strip(" :-")
+                        break
+                menu_hint = resolve_menu_hint(text)
+                sys_hit = match_system_button(
+                    label=label,
+                    menu=menu_hint,
+                    labels_table=ak._LABELS,
+                )
+                if not sys_hit:
+                    await message.answer(
+                        "کلید سیستم پیدا نشد."
+                        if lang.startswith("fa")
+                        else "System button not found.",
+                        reply_markup=ak.cancel_keyboard(lang),
+                    )
+                    return
+                action_id, menu = sys_hit
+                result = queue_system_button_change(
+                    op="restore",
+                    action=action_id,
+                    menu=menu,
+                    description=f"Restore system button {action_id} on {menu}",
+                    admin_chat_id=uid,
+                )
+                if not result.get("ok"):
+                    await message.answer(
+                        f"❌ {result.get('error')}",
+                        reply_markup=ak.cancel_keyboard(lang),
+                    )
+                    return
+                await message.answer(
+                    (
+                        f"🛡 بازگردانی `{action_id}` روی `{menu}` در صف safe-change است.\n"
+                        f"change: `{result.get('change_id')}`"
+                        if lang.startswith("fa")
+                        else (
+                            f"🛡 Restore `{action_id}` on `{menu}` queued.\n"
+                            f"change: `{result.get('change_id')}`"
+                        )
+                    ),
+                    reply_markup=ak.cancel_keyboard(lang),
                 )
                 return
             if wants_add_button:
@@ -1661,6 +1780,24 @@ def setup_admin_settings_router(
                     )
                     + "; ".join(result.errors)
                 ).strip()
+
+            if result.safe_change_queued and result.safe_change_queued.get("ok"):
+                cid = result.safe_change_queued.get("change_id")
+                clean = (
+                    (
+                        f"{clean}\n\n🛡 تغییر در صف safe-change است.\n"
+                        f"change: `{cid}`\n"
+                        "ربات ری‌استارت می‌شود؛ حدود ۱ دقیقه فرصت چک دارید."
+                        if lang.startswith("fa")
+                        else (
+                            f"{clean}\n\n🛡 Change queued via safe-change.\n"
+                            f"change: `{cid}`\n"
+                            "Bot restarts; ~1 minute observe window."
+                        )
+                    )
+                ).strip()
+                await message.answer(clean[:3900] or "✅", reply_markup=ak.cancel_keyboard(lang))
+                return
 
             # Navigate to requested section when possible.
             if result.open_section:
