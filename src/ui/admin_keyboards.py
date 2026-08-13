@@ -555,23 +555,24 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
     },
     "bot_chat_start": {
         "fa": (
-            "💬 گفتگو با ربات برای تنظیمات فعال شد.\n\n"
-            "می‌توانم این‌ها را اعمال کنم:\n"
-            "• اطلاعات اصلی / اسلات / پنل / سلامت / ستون کیبورد\n"
-            "• ساخت کلید با کدنویسی AI (از مسیر امن safe-change با تأیید حدود ۱ دقیقه)\n"
-            "• حذف کلید تولیدشده\n\n"
-            "مثال:\n"
-            "کلید بساز: گزارش سریع سلامت برای ادمین\n\n"
+            "💬 گفتگو با ربات — دسترسی کامل به تنظیمات فعال شد.\n\n"
+            "می‌توانم همهٔ بخش‌های موجود را ویرایش کنم:\n"
+            "• اطلاعات اصلی (نام/سایت/کانال/گروه/پشتیبانی)\n"
+            "• پیام‌ها: کانال، گروه، اکانت، اکانت تست (اسلات‌ها، زمان، متن، قوانین، روشن/خاموش)\n"
+            "• پنل (آدرس/پورت/Inbound)\n"
+            "• سلامت روزانه / ادمین‌ها / ستون کیبورد\n"
+            "• ساخت کلید با کدنویسی AI (safe-change حدود ۱ دقیقه)\n\n"
+            "مثال: زمان اخبار کانال را ۱۰:۰۰ و ۱۷:۰۰ کن\n"
+            "مثال: کلید بساز: خلاصه وضعیت پنل برای ادمین\n\n"
             "برای پایان: بازگشت به تنظیمات."
         ),
         "en": (
-            "💬 Bot config chat is on.\n\n"
-            "I can apply:\n"
-            "• Owner / slots / panel / health / keyboard columns\n"
-            "• Create buttons with AI-written code (safe-change + ~1 min confirm)\n"
-            "• Remove generated buttons\n\n"
-            "Example:\n"
-            "create button: quick health report for admin\n\n"
+            "💬 Bot config chat — full settings access is on.\n\n"
+            "I can edit all existing sections:\n"
+            "• Owner info\n"
+            "• Messages: channel/group/account/test slots\n"
+            "• Panel / health / admins / keyboard columns\n"
+            "• AI-coded buttons via safe-change (~1 min)\n\n"
             "To exit: Back to Settings."
         ),
     },

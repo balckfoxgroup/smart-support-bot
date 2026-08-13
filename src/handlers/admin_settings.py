@@ -1590,59 +1590,19 @@ def setup_admin_settings_router(
                 )
                 return
 
-            owner = await bot_settings.get_owner()
-            ui = await bot_settings.get_ui_settings()
-            health = await bot_settings.get_health_settings()
-            panel = await bot_settings.get_panel()
-            channel = await bot_settings.get_target("channel")
-            support = await bot_settings.get_target("support")
+            from src.bot_config_apply import (
+                apply_operator_lines,
+                build_full_state_brief,
+                operator_command_help,
+                operator_system_prompt,
+                strip_apply_lines,
+            )
 
-            def _slot_brief(slots: list[Any]) -> str:
-                bits = []
-                for s in slots:
-                    bits.append(
-                        f"{{i={s.index + 1}, kind={s.kind}, enabled={s.enabled}, "
-                        f"chat_id={s.chat_id!r}, times={s.schedule_times!r}}}"
-                    )
-                return "[" + ", ".join(bits) + "]"
-
-            channel_brief = _slot_brief(channel.slots)
-            support_brief = _slot_brief(support.slots)
-            customs = await bot_settings.list_custom_buttons(menu="settings")
-            customs_brief = [
-                f"{b.get('id')}:{b.get('label_fa')}->{b.get('action')}" for b in customs
-            ]
+            state_brief = await build_full_state_brief(bot_settings)
             prompt = (
-                "You are the Smart Support Bot settings operator for an ADMIN.\n"
-                "You can APPLY real changes with machine lines. Never invent fake menus.\n"
-                "You can add/remove custom settings buttons bound to ALLOWED ready actions "
-                f"only: {sorted(ALLOWED_ACTIONS)}.\n"
-                "Custom buttons are real and runnable — never create a button without a valid action.\n"
-                "Do not mention Cursor/Deploy or source-code editing unless the admin asks for "
-                "an action outside the catalog; then list allowed actions instead.\n\n"
-                f"Current owner: {owner.to_dict()}\n"
-                f"Current UI: {ui}\n"
-                f"Current health: {health}\n"
-                f"Current panel: base_url={panel.base_url!r} port={panel.required_port} "
-                f"inbound={panel.inbound_id}\n"
-                f"Channel slots: {channel_brief}\n"
-                f"Account slots: {support_brief}\n"
-                f"Custom buttons: {customs_brief}\n\n"
-                "When applying, end your reply with one or more lines exactly like:\n"
-                "APPLY_OWNER site_url=https://...\n"
-                "APPLY_UI settings_columns=2\n"
-                "APPLY_HEALTH enabled=true\n"
-                "APPLY_PANEL base_url=https://...\n"
-                "APPLY_SLOT target=channel slot=2 enabled=true schedule=10:00,17:00 "
-                "chat_id=@blackFoxVPNN kind=news\n"
-                "APPLY_BUTTON_ADD label_fa=🩺 سلامت سریع label_en=🩺 Quick Health "
-                "action=run_health_now\n"
-                "APPLY_BUTTON_ADD label_fa=📢 تست کانال action=send_static_now "
-                "target=channel slot=1\n"
-                "APPLY_BUTTON_REMOVE id=cb_abc123\n"
-                "APPLY_BUTTON_REMOVE label=🩺 سلامت سریع\n"
-                "SHOW_SETTINGS_KEYBOARD\n\n"
-                "Reply short guidance in the admin language; keep APPLY_* lines at the end.\n\n"
+                f"{operator_system_prompt()}\n"
+                f"CURRENT STATE:\n{state_brief}\n\n"
+                f"{operator_command_help()}\n"
                 f"Admin language hint: {lang}\n"
                 f"Admin request: {text}"
             )
@@ -1652,8 +1612,8 @@ def setup_admin_settings_router(
                         {
                             "role": "system",
                             "content": (
-                                "Settings operator. Apply only via APPLY_* lines. "
-                                "Be honest about limits. No fake UI panels."
+                                "Full settings operator. Edit any existing section via APPLY_*/OPEN_SECTION. "
+                                "No fake menus."
                             ),
                         },
                         {"role": "user", "content": prompt},
@@ -1663,196 +1623,20 @@ def setup_admin_settings_router(
                 await message.answer(f"❌ {exc}", reply_markup=ak.cancel_keyboard(lang))
                 return
             answer = strip_reasoning_leak(answer)
-            applied: list[str] = []
-            show_settings_kb = False
-
-            def _parse_bool(raw: str) -> bool:
-                return raw.strip().lower() in {"1", "true", "yes", "on", "بله", "روشن"}
-
-            for line in (answer or "").splitlines():
-                line = line.strip()
-                if line == "SHOW_SETTINGS_KEYBOARD":
-                    show_settings_kb = True
-                    continue
-                if line.startswith("APPLY_OWNER "):
-                    body = line[len("APPLY_OWNER ") :].strip()
-                    if "=" not in body:
-                        continue
-                    k, v = body.split("=", 1)
-                    k, v = k.strip(), v.strip()
-                    if k in {
-                        "site_url",
-                        "channel",
-                        "group",
-                        "support_handle",
-                        "bot_display_name",
-                    } and v:
-                        owner = await bot_settings.update_owner(**{k: v})
-                        apply_owner_info(owner)
-                        if k == "bot_display_name":
-                            from src.branding import sync_telegram_bot_name
-
-                            await sync_telegram_bot_name(message.bot, v)
-                        applied.append(f"owner.{k}")
-                    continue
-                if line.startswith("APPLY_UI "):
-                    body = line[len("APPLY_UI ") :].strip()
-                    if "=" not in body:
-                        continue
-                    k, v = body.split("=", 1)
-                    k, v = k.strip(), v.strip()
-                    if k == "settings_columns":
-                        try:
-                            cols = int(v)
-                        except ValueError:
-                            cols = 2
-                        ui = await bot_settings.update_ui_settings(settings_columns=cols)
-                        ak.set_settings_columns(int(ui["settings_columns"]))
-                        applied.append(f"ui.settings_columns={ui['settings_columns']}")
-                        show_settings_kb = True
-                    continue
-                if line.startswith("APPLY_HEALTH "):
-                    body = line[len("APPLY_HEALTH ") :].strip()
-                    if "=" not in body:
-                        continue
-                    k, v = body.split("=", 1)
-                    k, v = k.strip(), v.strip()
-                    if k == "enabled":
-                        await bot_settings.update_health_settings(enabled=_parse_bool(v))
-                        applied.append(f"health.enabled={_parse_bool(v)}")
-                    elif k == "times" and v:
-                        await bot_settings.update_health_settings(times=v)
-                        applied.append("health.times")
-                    elif k == "chat_id":
-                        await bot_settings.update_health_settings(chat_id=v)
-                        applied.append("health.chat_id")
-                    continue
-                if line.startswith("APPLY_PANEL "):
-                    body = line[len("APPLY_PANEL ") :].strip()
-                    if "=" not in body:
-                        continue
-                    k, v = body.split("=", 1)
-                    k, v = k.strip(), v.strip()
-                    try:
-                        if k == "base_url" and v:
-                            await bot_settings.update_panel(base_url=v)
-                            applied.append("panel.base_url")
-                        elif k == "required_port" and v:
-                            await bot_settings.update_panel(required_port=int(v))
-                            applied.append("panel.required_port")
-                        elif k == "inbound_id" and v:
-                            await bot_settings.update_panel(inbound_id=int(v))
-                            applied.append("panel.inbound_id")
-                        elif k == "api_token":
-                            # Do not accept panel tokens via free-form chat.
-                            applied.append("panel.api_token(skipped-use-panel-menu)")
-                    except ValueError:
-                        continue
-                    continue
-                if line.startswith("APPLY_SLOT "):
-                    body = line[len("APPLY_SLOT ") :].strip()
-                    parts = body.split()
-                    fields: dict[str, str] = {}
-                    for part in parts:
-                        if "=" not in part:
-                            continue
-                        pk, pv = part.split("=", 1)
-                        fields[pk.strip()] = pv.strip()
-                    target = fields.get("target", "")
-                    if target not in TARGET_KEYS:
-                        continue
-                    try:
-                        slot_no = int(fields.get("slot") or "0")
-                    except ValueError:
-                        continue
-                    if not (1 <= slot_no <= 3):
-                        continue
-                    idx = slot_no - 1
-                    updates: dict[str, Any] = {}
-                    if "enabled" in fields:
-                        updates["enabled"] = _parse_bool(fields["enabled"])
-                    if "schedule" in fields:
-                        updates["schedule_times"] = fields["schedule"]
-                    if "chat_id" in fields:
-                        updates["chat_id"] = fields["chat_id"]
-                    if "kind" in fields and fields["kind"] in SLOT_KINDS:
-                        if target == "support":
-                            updates["kind"] = "static"
-                        else:
-                            updates["kind"] = fields["kind"]
-                    if "template" in fields:
-                        updates["message_template"] = fields["template"]
-                    if updates:
-                        await bot_settings.update_slot(target, idx, **updates)
-                        applied.append(f"slot.{target}.{slot_no}")
-                    continue
-                if line.startswith("APPLY_BUTTON_ADD "):
-                    body = line[len("APPLY_BUTTON_ADD ") :].strip()
-                    fields: dict[str, str] = {}
-                    # Support label_fa="..." with spaces via simple quote parse
-                    rest = body
-                    for key in ("label_fa", "label_en", "action", "menu", "target", "slot", "text"):
-                        marker = f"{key}="
-                        if marker not in rest:
-                            continue
-                        after = rest.split(marker, 1)[1]
-                        if after.startswith('"'):
-                            end = after.find('"', 1)
-                            val = after[1:end] if end > 0 else after.strip().split()[0]
-                        else:
-                            val = after.split()[0]
-                        fields[key] = val.strip()
-                    action_name = fields.get("action", "").strip()
-                    label_fa = fields.get("label_fa", "").strip()
-                    if action_name not in ALLOWED_ACTIONS or not label_fa:
-                        continue
-                    params: dict[str, Any] = {}
-                    for pk in ("target", "slot", "text"):
-                        if pk in fields:
-                            params[pk] = fields[pk]
-                    try:
-                        created = await bot_settings.add_custom_button(
-                            {
-                                "id": new_button_id(),
-                                "menu": fields.get("menu") or "settings",
-                                "label_fa": label_fa,
-                                "label_en": fields.get("label_en") or label_fa,
-                                "enabled": True,
-                                "action": action_name,
-                                "params": params,
-                                "order": 50,
-                            }
-                        )
-                        applied.append(f"button.add:{created.get('id')}")
-                        show_settings_kb = True
-                    except ValueError:
-                        continue
-                    continue
-                if line.startswith("APPLY_BUTTON_REMOVE "):
-                    body = line[len("APPLY_BUTTON_REMOVE ") :].strip()
-                    fields = {}
-                    for part in body.split():
-                        if "=" in part:
-                            k, v = part.split("=", 1)
-                            fields[k.strip()] = v.strip().strip('"')
-                    removed = await bot_settings.remove_custom_button(
-                        button_id=fields.get("id", ""),
-                        label=fields.get("label", ""),
-                    )
-                    if removed:
-                        applied.append(f"button.remove:{removed.get('id')}")
-                        show_settings_kb = True
-                    continue
-
-            clean = "\n".join(
-                ln
-                for ln in (answer or "").splitlines()
-                if not (
-                    ln.strip().startswith("APPLY_")
-                    or ln.strip() == "SHOW_SETTINGS_KEYBOARD"
+            result = await apply_operator_lines(
+                (answer or "").splitlines(),
+                bot_settings=bot_settings,
+                message_bot=message.bot,
+                allowed_catalog_actions=ALLOWED_ACTIONS,
+            )
+            clean = strip_apply_lines(answer or "")
+            if result.status_dump:
+                clean = (
+                    (clean + "\n\n—— STATUS ——\n" + result.status_dump)
+                    if clean
+                    else result.status_dump
                 )
-            ).strip()
-            if applied:
+            if result.applied:
                 clean = (
                     clean
                     + (
@@ -1860,14 +1644,93 @@ def setup_admin_settings_router(
                         if lang.startswith("fa")
                         else "\n\n✅ Applied: "
                     )
-                    + ", ".join(applied)
+                    + ", ".join(result.applied)
                 ).strip()
                 await audit.write(
                     "bot_config_chat_apply",
                     admin_id=uid,
-                    detail=", ".join(applied)[:500],
+                    detail=", ".join(result.applied)[:500],
                 )
-            if show_settings_kb:
+            if result.errors:
+                clean = (
+                    clean
+                    + (
+                        "\n⚠️ "
+                        if lang.startswith("fa")
+                        else "\n⚠ "
+                    )
+                    + "; ".join(result.errors)
+                ).strip()
+
+            # Navigate to requested section when possible.
+            if result.open_section:
+                sec = result.open_section
+                await bot_settings.set_session(uid, {"mode": sec if sec != "account" else "target"})
+                if sec == "settings":
+                    await _show_settings_hub(message, lang, bot_settings)
+                    return
+                if sec == "owner":
+                    await bot_settings.set_session(uid, {"mode": "owner"})
+                    await _show_owner(message, bot_settings, lang)
+                    return
+                if sec == "messages":
+                    await bot_settings.set_session(uid, {"mode": "messages_hub"})
+                    await _show_messages_hub(message, lang)
+                    return
+                if sec == "panel":
+                    await bot_settings.set_session(uid, {"mode": "panel"})
+                    await _show_panel(message, bot_settings, lang)
+                    return
+                if sec == "health":
+                    from src.health_report import build_health_report as _bhr
+
+                    report = await _bhr(settings, bot_settings, lang=lang)
+                    await bot_settings.set_session(uid, {"mode": "health"})
+                    await message.answer(
+                        ((clean + "\n\n") if clean else "") + report[:3500],
+                        reply_markup=ak.health_keyboard(lang),
+                    )
+                    return
+                if sec == "backup":
+                    await bot_settings.set_session(uid, {"mode": "backup"})
+                    await message.answer(
+                        ((clean + "\n\n") if clean else "")
+                        + ("💾 پشتیبان تنظیمات" if lang.startswith("fa") else "💾 Settings backup"),
+                        reply_markup=ak.backup_keyboard(lang),
+                    )
+                    return
+                if sec == "admins":
+                    await bot_settings.set_session(uid, {"mode": "admins"})
+                    await message.answer(
+                        ((clean + "\n\n") if clean else "") + await _admins_card(lang),
+                        reply_markup=ak.admins_keyboard(lang),
+                    )
+                    return
+                if sec in {"channel", "group", "account", "test"}:
+                    key = "support" if sec == "account" else sec
+                    await bot_settings.set_session(uid, {"mode": "target", "target_key": key})
+                    if clean:
+                        await message.answer(clean[:3900])
+                    await _show_target(message, bot_settings, key, lang)
+                    return
+                if sec == "creator":
+                    creator = load_creator_contact(settings.knowledge_root)
+                    await message.answer(
+                        ((clean + "\n\n") if clean else "") + creator.format_card(lang),
+                        reply_markup=await _settings_kb(lang, bot_settings),
+                    )
+                    return
+                if sec == "control" and control is not None:
+                    from src.handlers.admin_control import _show_control_home
+
+                    await users.set_ask_ai(uid, False)
+                    await control.registry.set_session(uid, {"mode": "control_home"})
+                    if clean:
+                        await message.answer(clean[:3900])
+                    await _show_control_home(message, control, lang)
+                    return
+
+            if result.show_settings_keyboard:
                 await bot_settings.set_session(uid, {"mode": "settings"})
                 kb = await _settings_kb(lang, bot_settings)
             else:
