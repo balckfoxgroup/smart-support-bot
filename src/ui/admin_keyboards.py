@@ -6,6 +6,30 @@ from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
 Lang = str
 
+# Runtime UI preference (1 or 2 columns). Loaded from bot_settings on start / APPLY_UI.
+_settings_columns: int = 2
+
+
+def set_settings_columns(columns: int) -> int:
+    global _settings_columns
+    _settings_columns = 1 if int(columns) == 1 else 2
+    return _settings_columns
+
+
+def get_settings_columns() -> int:
+    return 1 if _settings_columns == 1 else 2
+
+
+def _chunk_rows(buttons: list[KeyboardButton], cols: int | None = None) -> list[list[KeyboardButton]]:
+    n = get_settings_columns() if cols is None else (1 if cols == 1 else 2)
+    if n <= 1:
+        return [[b] for b in buttons]
+    rows: list[list[KeyboardButton]] = []
+    for i in range(0, len(buttons), n):
+        rows.append(buttons[i : i + n])
+    return rows
+
+
 # action → {fa, en} — every button has its own emoji
 _LABELS: dict[str, dict[Lang, str]] = {
     "change_agent_api": {
@@ -480,13 +504,27 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
     },
     "bot_chat_start": {
         "fa": (
-            "💬 گفتگو با ربات برای کل تنظیمات فعال شد.\n"
-            "درخواست خود را بنویسید. تماس با سازنده قابل تغییر نیست.\n"
-            "برای پایان: دکمه بازگشت به تنظیمات."
+            "💬 گفتگو با ربات برای تنظیمات فعال شد.\n\n"
+            "می‌توانم این‌ها را واقعاً اعمال کنم:\n"
+            "• اطلاعات اصلی (سایت/کانال/گروه/پشتیبانی/نام ربات)\n"
+            "• اسلات پیام‌ها (مقصد، زمان، روشن/خاموش، نوع)\n"
+            "• پنل (آدرس/پورت/Inbound)\n"
+            "• سلامت روزانه\n"
+            "• ظاهر کیبورد تنظیمات (۱ یا ۲ ستونه)\n\n"
+            "نمی‌توانم از داخل تلگرام کد سورس را عوض کنم؛ برای تغییر کد از Cursor/Deploy استفاده کنید.\n"
+            "تماس با سازنده قفل است.\n"
+            "برای پایان: بازگشت به تنظیمات."
         ),
         "en": (
-            "💬 Bot-wide config chat is on.\n"
-            "Describe what to change. Creator contact is locked.\n"
+            "💬 Bot config chat is on.\n\n"
+            "I can actually apply:\n"
+            "• Owner info (site/channel/group/support/bot name)\n"
+            "• Message slots (dest, schedule, on/off, kind)\n"
+            "• Panel (URL/port/inbound)\n"
+            "• Daily health\n"
+            "• Settings keyboard layout (1 or 2 columns)\n\n"
+            "I cannot edit source code from Telegram; use Cursor/Deploy for code.\n"
+            "Creator contact is locked.\n"
             "To exit: Back to Settings."
         ),
     },
@@ -773,20 +811,21 @@ def all_admin_control_texts() -> frozenset[str]:
 
 
 def settings_hub_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    buttons = [
+        KeyboardButton(text=label("owner_info", lang)),
+        KeyboardButton(text=label("bot_config_chat", lang)),
+        KeyboardButton(text=label("build_catalogs", lang)),
+        KeyboardButton(text=label("change_agent_api", lang)),
+        KeyboardButton(text=label("settings_messages", lang)),
+        KeyboardButton(text=label("settings_panel", lang)),
+        KeyboardButton(text=label("backup_settings", lang)),
+        KeyboardButton(text=label("health_status", lang)),
+        KeyboardButton(text=label("manage_admins", lang)),
+        KeyboardButton(text=label("creator_contact", lang)),
+        KeyboardButton(text=label("stats_back", lang)),
+    ]
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=label("owner_info", lang))],
-            [KeyboardButton(text=label("bot_config_chat", lang))],
-            [KeyboardButton(text=label("build_catalogs", lang))],
-            [KeyboardButton(text=label("change_agent_api", lang))],
-            [KeyboardButton(text=label("settings_messages", lang))],
-            [KeyboardButton(text=label("settings_panel", lang))],
-            [KeyboardButton(text=label("backup_settings", lang))],
-            [KeyboardButton(text=label("health_status", lang))],
-            [KeyboardButton(text=label("manage_admins", lang))],
-            [KeyboardButton(text=label("creator_contact", lang))],
-            [KeyboardButton(text=label("stats_back", lang))],
-        ],
+        keyboard=_chunk_rows(buttons),
         resize_keyboard=True,
         is_persistent=True,
         input_field_placeholder="Settings / تنظیمات",
@@ -794,51 +833,55 @@ def settings_hub_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
 
 
 def backup_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    buttons = [
+        KeyboardButton(text=label("backup_export", lang)),
+        KeyboardButton(text=label("backup_import", lang)),
+        KeyboardButton(text=label("settings_back", lang)),
+    ]
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=label("backup_export", lang))],
-            [KeyboardButton(text=label("backup_import", lang))],
-            [KeyboardButton(text=label("settings_back", lang))],
-        ],
+        keyboard=_chunk_rows(buttons),
         resize_keyboard=True,
         is_persistent=True,
     )
 
 
 def health_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    buttons = [
+        KeyboardButton(text=label("health_status", lang)),
+        KeyboardButton(text=label("health_toggle", lang)),
+        KeyboardButton(text=label("health_times", lang)),
+        KeyboardButton(text=label("health_chat", lang)),
+        KeyboardButton(text=label("settings_back", lang)),
+    ]
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=label("health_status", lang))],
-            [KeyboardButton(text=label("health_toggle", lang))],
-            [KeyboardButton(text=label("health_times", lang))],
-            [KeyboardButton(text=label("health_chat", lang))],
-            [KeyboardButton(text=label("settings_back", lang))],
-        ],
+        keyboard=_chunk_rows(buttons),
         resize_keyboard=True,
         is_persistent=True,
     )
 
 
 def admins_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    buttons = [
+        KeyboardButton(text=label("admin_role_full", lang)),
+        KeyboardButton(text=label("admin_role_stats", lang)),
+        KeyboardButton(text=label("admin_remove", lang)),
+        KeyboardButton(text=label("settings_back", lang)),
+    ]
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=label("admin_role_full", lang))],
-            [KeyboardButton(text=label("admin_role_stats", lang))],
-            [KeyboardButton(text=label("admin_remove", lang))],
-            [KeyboardButton(text=label("settings_back", lang))],
-        ],
+        keyboard=_chunk_rows(buttons),
         resize_keyboard=True,
         is_persistent=True,
     )
 
 
 def stats_hub_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    buttons = [
+        KeyboardButton(text=label("stats_report", lang)),
+        KeyboardButton(text=label("health_status", lang)),
+        KeyboardButton(text=label("stats_back", lang)),
+    ]
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=label("stats_report", lang))],
-            [KeyboardButton(text=label("health_status", lang))],
-            [KeyboardButton(text=label("stats_back", lang))],
-        ],
+        keyboard=_chunk_rows(buttons),
         resize_keyboard=True,
         is_persistent=True,
         input_field_placeholder="Statistics / آمار",
@@ -846,29 +889,31 @@ def stats_hub_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
 
 
 def owner_info_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    buttons = [
+        KeyboardButton(text=label("owner_bot_name", lang)),
+        KeyboardButton(text=label("owner_site", lang)),
+        KeyboardButton(text=label("owner_channel", lang)),
+        KeyboardButton(text=label("owner_group", lang)),
+        KeyboardButton(text=label("owner_support", lang)),
+        KeyboardButton(text=label("settings_back", lang)),
+    ]
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=label("owner_bot_name", lang))],
-            [KeyboardButton(text=label("owner_site", lang))],
-            [KeyboardButton(text=label("owner_channel", lang))],
-            [KeyboardButton(text=label("owner_group", lang))],
-            [KeyboardButton(text=label("owner_support", lang))],
-            [KeyboardButton(text=label("settings_back", lang))],
-        ],
+        keyboard=_chunk_rows(buttons),
         resize_keyboard=True,
         is_persistent=True,
     )
 
 
 def messages_hub_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    buttons = [
+        KeyboardButton(text=label("msg_channel", lang)),
+        KeyboardButton(text=label("msg_group", lang)),
+        KeyboardButton(text=label("msg_account", lang)),
+        KeyboardButton(text=label("msg_test", lang)),
+        KeyboardButton(text=label("settings_back", lang)),
+    ]
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=label("msg_channel", lang))],
-            [KeyboardButton(text=label("msg_group", lang))],
-            [KeyboardButton(text=label("msg_account", lang))],
-            [KeyboardButton(text=label("msg_test", lang))],
-            [KeyboardButton(text=label("settings_back", lang))],
-        ],
+        keyboard=_chunk_rows(buttons),
         resize_keyboard=True,
         is_persistent=True,
         input_field_placeholder="Default messages",
@@ -882,62 +927,72 @@ def catalog_wizard_keyboard(lang: str | None = "en", *, sources: dict[str, bool]
         base = label(key, lang)
         return (("✅ " if on else "⬜ ") + base)
 
+    buttons = [
+        KeyboardButton(text=mark(bool(sources.get("site")), "catalog_src_site")),
+        KeyboardButton(text=mark(bool(sources.get("channel")), "catalog_src_channel")),
+        KeyboardButton(text=mark(bool(sources.get("group")), "catalog_src_group")),
+        KeyboardButton(text=label("catalog_run", lang)),
+        KeyboardButton(text=label("settings_back", lang)),
+    ]
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=mark(bool(sources.get("site")), "catalog_src_site"))],
-            [KeyboardButton(text=mark(bool(sources.get("channel")), "catalog_src_channel"))],
-            [KeyboardButton(text=mark(bool(sources.get("group")), "catalog_src_group"))],
-            [KeyboardButton(text=label("catalog_run", lang))],
-            [KeyboardButton(text=label("settings_back", lang))],
-        ],
+        keyboard=_chunk_rows(buttons),
         resize_keyboard=True,
         is_persistent=True,
     )
 
 
 def target_edit_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=label("edit_dest", lang))],
-            [
-                KeyboardButton(text=label("slot_1", lang)),
-                KeyboardButton(text=label("slot_2", lang)),
-                KeyboardButton(text=label("slot_3", lang)),
-            ],
-            [KeyboardButton(text=label("nav_back", lang))],
-            [KeyboardButton(text=label("settings_back", lang))],
+    rows = [
+        [KeyboardButton(text=label("edit_dest", lang))],
+        [
+            KeyboardButton(text=label("slot_1", lang)),
+            KeyboardButton(text=label("slot_2", lang)),
+            KeyboardButton(text=label("slot_3", lang)),
         ],
+    ]
+    rows.extend(
+        _chunk_rows(
+            [
+                KeyboardButton(text=label("nav_back", lang)),
+                KeyboardButton(text=label("settings_back", lang)),
+            ]
+        )
+    )
+    return ReplyKeyboardMarkup(
+        keyboard=rows,
         resize_keyboard=True,
         is_persistent=True,
     )
 
 
 def slot_edit_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    buttons = [
+        KeyboardButton(text=label("toggle_slot_enabled", lang)),
+        KeyboardButton(text=label("edit_dest", lang)),
+        KeyboardButton(text=label("edit_template", lang)),
+        KeyboardButton(text=label("edit_schedule", lang)),
+        KeyboardButton(text=label("edit_rules", lang)),
+        KeyboardButton(text=label("edit_slot_kind", lang)),
+        KeyboardButton(text=label("nav_back", lang)),
+        KeyboardButton(text=label("settings_back", lang)),
+    ]
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=label("toggle_slot_enabled", lang))],
-            [KeyboardButton(text=label("edit_dest", lang))],
-            [KeyboardButton(text=label("edit_template", lang))],
-            [KeyboardButton(text=label("edit_schedule", lang))],
-            [KeyboardButton(text=label("edit_rules", lang))],
-            [KeyboardButton(text=label("edit_slot_kind", lang))],
-            [KeyboardButton(text=label("nav_back", lang))],
-            [KeyboardButton(text=label("settings_back", lang))],
-        ],
+        keyboard=_chunk_rows(buttons),
         resize_keyboard=True,
         is_persistent=True,
     )
 
 
 def panel_edit_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    buttons = [
+        KeyboardButton(text=label("edit_panel_url", lang)),
+        KeyboardButton(text=label("edit_panel_token", lang)),
+        KeyboardButton(text=label("edit_panel_port", lang)),
+        KeyboardButton(text=label("edit_panel_inbound", lang)),
+        KeyboardButton(text=label("settings_back", lang)),
+    ]
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=label("edit_panel_url", lang))],
-            [KeyboardButton(text=label("edit_panel_token", lang))],
-            [KeyboardButton(text=label("edit_panel_port", lang))],
-            [KeyboardButton(text=label("edit_panel_inbound", lang))],
-            [KeyboardButton(text=label("settings_back", lang))],
-        ],
+        keyboard=_chunk_rows(buttons),
         resize_keyboard=True,
         is_persistent=True,
     )
@@ -983,25 +1038,27 @@ def control_home_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
 
 def cancel_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
     """Keyboard for admin value-input steps."""
+    buttons = [
+        KeyboardButton(text=label("cancel", lang)),
+        KeyboardButton(text=label("nav_back", lang)),
+        KeyboardButton(text=label("settings_back", lang)),
+    ]
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=label("cancel", lang))],
-            [KeyboardButton(text=label("nav_back", lang))],
-            [KeyboardButton(text=label("settings_back", lang))],
-        ],
+        keyboard=_chunk_rows(buttons),
         resize_keyboard=True,
         is_persistent=True,
     )
 
 
 def skip_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    buttons = [
+        KeyboardButton(text=label("skip", lang)),
+        KeyboardButton(text=label("cancel", lang)),
+        KeyboardButton(text=label("nav_back", lang)),
+        KeyboardButton(text=label("settings_back", lang)),
+    ]
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=label("skip", lang))],
-            [KeyboardButton(text=label("cancel", lang))],
-            [KeyboardButton(text=label("nav_back", lang))],
-            [KeyboardButton(text=label("settings_back", lang))],
-        ],
+        keyboard=_chunk_rows(buttons),
         resize_keyboard=True,
         is_persistent=True,
     )

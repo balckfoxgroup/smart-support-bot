@@ -216,6 +216,9 @@ class BotSettingsStore:
                 "times": "09:00",
                 "chat_id": "",
             },
+            "ui": {
+                "settings_columns": 2,
+            },
             "admin_sessions": {},
             "version": 3,
         }
@@ -238,6 +241,7 @@ class BotSettingsStore:
                     "health",
                     {"enabled": True, "times": "09:00", "chat_id": ""},
                 )
+                self._data.setdefault("ui", {"settings_columns": 2})
                 self._data.setdefault("admin_sessions", {})
                 # One-time structural migrate for older installs
                 if int(self._data.get("version") or 0) < 4:
@@ -761,6 +765,26 @@ class BotSettingsStore:
             self._save_sync()
             return dict(cur)
 
+    async def get_ui_settings(self) -> dict[str, Any]:
+        async with self._lock:
+            raw = self._data.get("ui") if isinstance(self._data.get("ui"), dict) else {}
+            cols = int(raw.get("settings_columns") or 2)
+            return {"settings_columns": 1 if cols == 1 else 2}
+
+    async def update_ui_settings(self, **fields: Any) -> dict[str, Any]:
+        async with self._lock:
+            cur = self._data.setdefault("ui", {"settings_columns": 2})
+            if not isinstance(cur, dict):
+                cur = {"settings_columns": 2}
+                self._data["ui"] = cur
+            if "settings_columns" in fields and fields["settings_columns"] is not None:
+                cols = int(fields["settings_columns"])
+                cur["settings_columns"] = 1 if cols == 1 else 2
+            self._save_sync()
+            return {
+                "settings_columns": 1 if int(cur.get("settings_columns") or 2) == 1 else 2
+            }
+
     async def export_backup(self) -> dict[str, Any]:
         """Export settings (panel token decrypted). Sessions excluded."""
         from datetime import datetime, timezone
@@ -794,6 +818,11 @@ class BotSettingsStore:
                     "enabled": bool(health.get("enabled", True)),
                     "times": str(health.get("times") or "09:00"),
                     "chat_id": str(health.get("chat_id") or ""),
+                },
+                "ui": {
+                    "settings_columns": 1
+                    if int((self._data.get("ui") or {}).get("settings_columns") or 2) == 1
+                    else 2
                 },
             }
 
@@ -853,6 +882,10 @@ class BotSettingsStore:
                     "chat_id": str(h.get("chat_id") or "").strip(),
                 }
                 applied.append("health")
+            if isinstance(payload.get("ui"), dict):
+                cols = int(payload["ui"].get("settings_columns") or 2)
+                self._data["ui"] = {"settings_columns": 1 if cols == 1 else 2}
+                applied.append("ui")
             if applied:
                 self._data["version"] = max(int(self._data.get("version") or 0), 3)
                 self._save_sync()

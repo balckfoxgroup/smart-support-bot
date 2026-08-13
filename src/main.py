@@ -116,6 +116,10 @@ async def run() -> None:
         data_dir=settings.data_dir,
     )
     apply_owner_info(await bot_settings.get_owner())
+    ui_prefs = await bot_settings.get_ui_settings()
+    from src.ui import admin_keyboards as ak
+
+    ak.set_settings_columns(int(ui_prefs.get("settings_columns") or 2))
     access = AdminAccess(settings, bot_settings)
 
     knowledge = KnowledgeLoader(settings)
