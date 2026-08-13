@@ -61,7 +61,7 @@ class AIClient:
 
     async def chat(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         *,
         temperature: float | None = None,
         max_tokens: int | None = None,
@@ -93,6 +93,34 @@ class AIClient:
                 # Fall through to env Settings so support bot stays up if registry empty/corrupt
 
         return await self._chat_env(messages, temperature=temperature, max_tokens=max_tokens)
+
+    async def chat_with_images(
+        self,
+        prompt: str,
+        image_jpeg_bytes: list[bytes],
+        *,
+        system: str | None = None,
+        max_images: int = 6,
+    ) -> str:
+        """Vision-capable chat: send JPEG bytes as data-URL image_url parts."""
+        import base64
+
+        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for raw in (image_jpeg_bytes or [])[: max(1, max_images)]:
+            if not raw:
+                continue
+            b64 = base64.b64encode(raw).decode("ascii")
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                }
+            )
+        messages: list[dict[str, Any]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": content})
+        return await self.chat(messages)
 
     async def _chat_env(
         self,

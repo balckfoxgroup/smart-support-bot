@@ -64,7 +64,29 @@ def _folder_payload(folder: Path) -> str:
             parts.append(f"\n### FILE {rel} (binary/other, name only)")
     if media_names:
         parts.append("\n### MEDIA FILES\n" + "\n".join(f"- {n}" for n in media_names))
+        parts.append(
+            "\n### NOTE\n"
+            "These images are product UI screenshots / photos. "
+            "If no text docs exist, still build a complete catalog JSON from the product_id hint "
+            "and the fact that UI screenshots were provided. Include features typical for that product."
+        )
     return "\n".join(parts)
+
+
+def collect_folder_images(folder: Path, *, limit: int = 6) -> list[bytes]:
+    out: list[bytes] = []
+    for path in sorted(folder.rglob("*")):
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in IMAGE_EXTS:
+            continue
+        try:
+            out.append(path.read_bytes())
+        except OSError:
+            continue
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _extract_json(text: str) -> dict[str, Any] | None:
@@ -184,18 +206,46 @@ async def build_one_catalog(
     payload = _folder_payload(folder)
     if extra_sources.strip():
         payload += "\n\n### OWNER SELECTED SOURCES\n" + extra_sources.strip()
-    if len(payload) < 40:
+    # Photos-only folders are valid; don't reject when media exists.
+    has_media = any(
+        p.is_file() and p.suffix.lower() in IMAGE_EXTS for p in folder.rglob("*")
+    )
+    if len(payload) < 40 and not has_media:
         raise ValueError(f"Folder too empty: {folder}")
 
-    answer = await ai_chat(
-        [
-            {"role": "system", "content": prompt},
-            {
-                "role": "user",
-                "content": "Analyze these product materials and produce the catalog JSON.\n\n" + payload,
-            },
-        ]
-    )
+    # Prefer vision when screenshots exist and ai_chat supports it.
+    images = collect_folder_images(folder, limit=5)
+    answer = ""
+    vision_fn = getattr(ai_chat, "chat_with_images", None)
+    # ai_chat may be bound method ai.chat — look for sibling chat_with_images
+    owner = getattr(ai_chat, "__self__", None)
+    if owner is not None and hasattr(owner, "chat_with_images"):
+        vision_fn = owner.chat_with_images
+    if callable(vision_fn) and images:
+        try:
+            answer = await vision_fn(
+                "Analyze these product screenshots and output ONLY valid catalog JSON "
+                "(schema_version 1, product_id, title/short_summary/long_summary/features "
+                "in fa/en/ru/zh). Use this context:\n\n"
+                + payload,
+                images,
+                system=prompt,
+                max_images=5,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("catalog vision failed, falling back to text: %s", exc)
+            answer = ""
+    if not (answer or "").strip():
+        answer = await ai_chat(
+            [
+                {"role": "system", "content": prompt},
+                {
+                    "role": "user",
+                    "content": "Analyze these product materials and produce the catalog JSON.\n\n"
+                    + payload,
+                },
+            ]
+        )
     data = _extract_json(answer)
     if not data:
         raise ValueError("AI did not return valid catalog JSON")

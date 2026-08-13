@@ -567,6 +567,9 @@ def setup_admin_settings_router(
             except Exception:  # noqa: BLE001
                 gen = None
             if gen:
+                # Stats-menu generated buttons are handled in admin_control (stats role).
+                if str(gen.get("menu") or "settings") == "stats":
+                    raise SkipHandler()
                 ok, lang = await _require_settings(message)
                 if not ok:
                     return
@@ -899,9 +902,12 @@ def setup_admin_settings_router(
                 return
             if action == "products_build_catalog":
                 staging = _staging_dir(settings, uid)
-                if staging.exists():
-                    shutil.rmtree(staging, ignore_errors=True)
-                staging.mkdir(parents=True, exist_ok=True)
+                # Keep already-uploaded photos (user often sends media before tapping Build).
+                has_files = staging.is_dir() and any(staging.iterdir())
+                if not has_files:
+                    if staging.exists():
+                        shutil.rmtree(staging, ignore_errors=True)
+                    staging.mkdir(parents=True, exist_ok=True)
                 await bot_settings.set_session(
                     uid,
                     {
@@ -914,7 +920,14 @@ def setup_admin_settings_router(
                     },
                 )
                 await _show_catalog_wizard(message, bot_settings, uid, lang)
-                await message.answer(ak.msg("catalog_ask_path", lang))
+                if has_files:
+                    await message.answer(
+                        "عکس‌های قبلی نگه داشته شدند. منابع را انتخاب کنید و «ساخت کاتالوگ» را بزنید."
+                        if (lang or "").startswith("fa")
+                        else "Previous uploads kept. Pick sources, then tap Build Catalog.",
+                    )
+                else:
+                    await message.answer(ak.msg("catalog_ask_path", lang))
                 return
             field = {
                 "products_edit_title": "title",
@@ -964,12 +977,32 @@ def setup_admin_settings_router(
 
         if action == "catalog_run":
             sess = await bot_settings.get_session(uid)
-            if sess.get("mode") != "catalog_wizard" or ai is None:
-                await _show_settings_hub(message, lang, bot_settings)
+            # Recover wizard context if session was partially lost after uploads.
+            staging = Path(str(sess.get("catalog_staging") or _staging_dir(settings, uid)))
+            if sess.get("mode") != "catalog_wizard":
+                if staging.is_dir() and any(staging.iterdir()):
+                    sess = {
+                        **sess,
+                        "mode": "catalog_wizard",
+                        "catalog_sources": sess.get("catalog_sources")
+                        or {"site": False, "channel": False, "group": False},
+                        "catalog_path": str(sess.get("catalog_path") or ""),
+                        "catalog_staging": str(staging),
+                    }
+                    await bot_settings.set_session(uid, sess)
+                else:
+                    await message.answer(
+                        "اول محصول را باز کنید و عکس/فایل بفرستید، بعد ساخت کاتالوگ را بزنید."
+                        if (lang or "").startswith("fa")
+                        else "Open a product, upload files/photos, then tap Build Catalog.",
+                        reply_markup=await _settings_kb(lang, bot_settings),
+                    )
+                    return
+            if ai is None:
+                await message.answer("AI unavailable.", reply_markup=await _settings_kb(lang, bot_settings))
                 return
             sources = sess.get("catalog_sources") or {}
             folder_path = str(sess.get("catalog_path") or "").strip()
-            staging = Path(str(sess.get("catalog_staging") or ""))
             await message.answer(ak.msg("catalog_building", lang))
             try:
                 hint = str(sess.get("product_hint") or sess.get("product_id") or "").strip()
@@ -1010,7 +1043,14 @@ def setup_admin_settings_router(
                 ak.msg("catalog_done", lang).format(ids=pid),
                 reply_markup=await _settings_kb(lang, bot_settings),
             )
-            await bot_settings.clear_session(uid)
+            # Keep product context; clear only wizard staging fields.
+            await bot_settings.set_session(
+                uid,
+                {
+                    "mode": "product_detail",
+                    "product_id": str(sess.get("product_id") or pid),
+                },
+            )
             return
 
         if action in _OWNER_FIELD_BY_ACTION:
@@ -1245,6 +1285,57 @@ def setup_admin_settings_router(
             return
 
         if sess.get("mode") != "catalog_wizard":
+            # Allow photo uploads during bot_config_chat for vision context.
+            if sess.get("mode") == "bot_config_chat" and message.photo and message.bot:
+                staging = settings.data_dir / "config_chat_images" / str(uid)
+                staging.mkdir(parents=True, exist_ok=True)
+                photo = message.photo[-1]
+                dest = staging / f"photo_{photo.file_unique_id}.jpg"
+                try:
+                    await message.bot.download(photo, destination=dest)
+                except Exception as exc:  # noqa: BLE001
+                    await message.answer(f"❌ upload failed: {exc}")
+                    return
+                imgs = list(sess.get("config_chat_images") or [])
+                imgs.append(str(dest))
+                sess["config_chat_images"] = imgs[-8:]
+                await bot_settings.set_session(uid, sess)
+                await message.answer(
+                    "✅ عکس ذخیره شد. در پیام بعدی بگویید با این عکس چه کاری انجام شود."
+                    if lang.startswith("fa")
+                    else "✅ Photo saved. In your next message say what to do with it.",
+                    reply_markup=ak.cancel_keyboard(lang),
+                )
+                return
+            # Product detail: accept photos into catalog staging before Build Catalog.
+            if (
+                sess.get("mode") == "product_detail"
+                and message.bot
+                and (message.photo or message.document)
+            ):
+                staging = _staging_dir(settings, uid)
+                staging.mkdir(parents=True, exist_ok=True)
+                try:
+                    if message.document:
+                        dest = staging / (
+                            message.document.file_name or f"file_{message.document.file_id}"
+                        )
+                        await message.bot.download(message.document, destination=dest)
+                    else:
+                        photo = message.photo[-1]
+                        dest = staging / f"photo_{photo.file_unique_id}.jpg"
+                        await message.bot.download(photo, destination=dest)
+                except Exception as exc:  # noqa: BLE001
+                    await message.answer(f"❌ upload failed: {exc}")
+                    return
+                n = sum(1 for _ in staging.iterdir() if _.is_file())
+                await message.answer(
+                    f"✅ فایل ذخیره شد ({n}). بعد «ساخت کاتالوگ» را بزنید."
+                    if lang.startswith("fa")
+                    else f"✅ Saved ({n}). Then tap Build Catalog.",
+                    reply_markup=ak.product_detail_keyboard(lang),
+                )
+                return
             raise SkipHandler()
         staging = Path(str(sess.get("catalog_staging") or _staging_dir(settings, uid)))
         staging.mkdir(parents=True, exist_ok=True)
@@ -1986,6 +2077,7 @@ def setup_admin_settings_router(
                     codegen_system_prompt,
                     extract_python_block,
                     guess_labels_from_request,
+                    guess_menu_from_request,
                     new_generated_id,
                     queue_generated_button_add,
                     validate_generated_button_source,
@@ -1996,27 +2088,44 @@ def setup_admin_settings_router(
                     return
                 button_id = new_generated_id()
                 label_fa, label_en = guess_labels_from_request(text)
+                menu_target = guess_menu_from_request(text)
                 await message.answer(
                     "⏳ در حال کدنویسی کلید با AI…"
                     if lang.startswith("fa")
                     else "⏳ Generating button code with AI…"
                 )
+                vision_note = ""
+                pending_imgs: list[bytes] = []
+                for p in list(sess.get("config_chat_images") or [])[-4:]:
+                    try:
+                        pending_imgs.append(Path(p).read_bytes())
+                    except OSError:
+                        continue
                 try:
-                    answer = await ai.chat(
-                        [
-                            {"role": "system", "content": codegen_system_prompt()},
-                            {
-                                "role": "user",
-                                "content": build_codegen_user_prompt(
-                                    admin_request=text,
-                                    button_id=button_id,
-                                    label_fa=label_fa,
-                                    label_en=label_en,
-                                    lang=lang,
-                                ),
-                            },
-                        ]
-                    )
+                    sys_p = codegen_system_prompt()
+                    user_p = build_codegen_user_prompt(
+                        admin_request=text,
+                        button_id=button_id,
+                        label_fa=label_fa,
+                        label_en=label_en,
+                        lang=lang,
+                    ) + f"\nTarget menu for this button: {menu_target}\n"
+                    if pending_imgs:
+                        answer = await ai.chat_with_images(
+                            user_p
+                            + "\nUse the attached screenshot(s) to understand UI context and implement the button accordingly.",
+                            pending_imgs,
+                            system=sys_p,
+                            max_images=4,
+                        )
+                        vision_note = "+vision"
+                    else:
+                        answer = await ai.chat(
+                            [
+                                {"role": "system", "content": sys_p},
+                                {"role": "user", "content": user_p},
+                            ]
+                        )
                 except AIClientError as exc:
                     await message.answer(f"❌ {exc}", reply_markup=ak.cancel_keyboard(lang))
                     return
@@ -2026,7 +2135,7 @@ def setup_admin_settings_router(
                     await message.answer(
                         (
                             f"❌ کد تولیدشده معتبر نبود: {detail}\n"
-                            "دوباره با توضیح واضح‌تر بخواهید."
+                            "دوباره با توضیح واضح‌تر بخواهید. برای نام کوتاه بنویسید: به نام «لیست کاربران»"
                             if lang.startswith("fa")
                             else f"❌ Invalid generated code: {detail}"
                         ),
@@ -2038,7 +2147,8 @@ def setup_admin_settings_router(
                     label_fa=label_fa,
                     label_en=label_en,
                     source=source,
-                    description=f"AI button: {label_fa}",
+                    menu=menu_target,
+                    description=f"AI button: {label_fa}@{menu_target}{vision_note}",
                     admin_chat_id=uid,
                 )
                 if not result.get("ok"):
@@ -2052,6 +2162,9 @@ def setup_admin_settings_router(
                     admin_id=uid,
                     detail=f"{button_id}:{result.get('change_id')}",
                 )
+                if pending_imgs:
+                    sess["config_chat_images"] = []
+                    await bot_settings.set_session(uid, sess)
                 await message.answer(
                     (
                         "🛡 کلید با کد AI در صف safe-change قرار گرفت.\n"
@@ -2090,19 +2203,35 @@ def setup_admin_settings_router(
                 f"Admin language hint: {lang}\n"
                 f"Admin request: {text}"
             )
+            pending_imgs: list[bytes] = []
+            for p in list(sess.get("config_chat_images") or [])[-4:]:
+                try:
+                    pending_imgs.append(Path(p).read_bytes())
+                except OSError:
+                    continue
             try:
-                answer = await ai.chat(
-                    [
-                        {
-                            "role": "system",
-                            "content": (
-                                "Full settings operator. Edit any existing section via APPLY_*/OPEN_SECTION. "
-                                "No fake menus."
-                            ),
-                        },
-                        {"role": "user", "content": prompt},
-                    ]
+                sys_op = (
+                    "Full settings operator. Edit any existing section via APPLY_*/OPEN_SECTION. "
+                    "No fake menus. If screenshots are attached, use what you see in them."
                 )
+                if pending_imgs:
+                    answer = await ai.chat_with_images(
+                        prompt
+                        + "\n\nUse the attached screenshot(s) as context for the admin request.",
+                        pending_imgs,
+                        system=sys_op,
+                        max_images=4,
+                    )
+                    # Consume images after one successful vision turn.
+                    sess["config_chat_images"] = []
+                    await bot_settings.set_session(uid, sess)
+                else:
+                    answer = await ai.chat(
+                        [
+                            {"role": "system", "content": sys_op},
+                            {"role": "user", "content": prompt},
+                        ]
+                    )
             except AIClientError as exc:
                 await message.answer(f"❌ {exc}", reply_markup=ak.cancel_keyboard(lang))
                 return

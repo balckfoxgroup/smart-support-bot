@@ -126,8 +126,22 @@ async def _show_control_home(
     await message.answer(body[:3900], reply_markup=ak.control_home_keyboard(lang))
 
 
+async def _stats_kb(lang: str):
+    generated: list = []
+    try:
+        from src.generated.buttons import list_generated_buttons
+
+        generated = list_generated_buttons(menu="stats", refresh=True)
+    except Exception:  # noqa: BLE001
+        generated = []
+    return ak.stats_hub_keyboard(lang, generated_buttons=generated)
+
+
 async def _show_stats_hub(message: Message, lang: str) -> None:
-    await message.answer(ak.msg("stats_hub", lang), reply_markup=ak.stats_hub_keyboard(lang))
+    await message.answer(
+        ak.msg("stats_hub", lang),
+        reply_markup=await _stats_kb(lang),
+    )
 
 
 async def _show_settings_hub(
@@ -206,7 +220,7 @@ def setup_admin_control_router(
         await users.set_ask_ai(uid, False)
         await control.registry.clear_session(uid)
         report = await build_bot_stats_report(settings, metrics)
-        await message.answer(report[:3900], reply_markup=ak.stats_hub_keyboard(lang))
+        await message.answer(report[:3900], reply_markup=await _stats_kb(lang))
 
     @router.message(F.text.in_(ak.texts("health_status")))
     async def on_health_from_stats(message: Message) -> None:
@@ -220,11 +234,41 @@ def setup_admin_control_router(
         if sess.get("mode") in {"health", "backup", "admins", "owner", "panel", "messages_hub", "target", "slot"}:
             raise SkipHandler()
         report = await build_health_report(settings, bot_settings, lang=lang)
-        await message.answer(report[:3900], reply_markup=ak.stats_hub_keyboard(lang))
+        await message.answer(report[:3900], reply_markup=await _stats_kb(lang))
 
     @router.message(F.text.in_(ak.all_admin_control_texts()))
     async def on_admin_button(message: Message) -> None:
         action = ak.resolve_action(message.text)
+        # Generated buttons (esp. stats menu) — run before settings-only early return.
+        if not action:
+            try:
+                from src.generated.buttons import dispatch_generated, find_generated_by_label
+
+                gen = find_generated_by_label(message.text or "")
+            except Exception:  # noqa: BLE001
+                gen = None
+            if gen:
+                menu = str(gen.get("menu") or "settings")
+                if menu == "stats":
+                    ok, lang = await _require_stats(message)
+                    if not ok:
+                        return
+                    ran = await dispatch_generated(
+                        message,
+                        gen,
+                        lang=lang,
+                        settings=settings,
+                        bot_settings=bot_settings,
+                    )
+                    if not ran:
+                        await message.answer(
+                            "اجرای کلید تولیدشده ناموفق بود."
+                            if lang.startswith("fa")
+                            else "Generated button failed to run."
+                        )
+                    return
+                # settings/health generated buttons stay in admin_settings
+                return
         # Settings-only actions are handled elsewhere
         if action in {
             "settings_hub",
@@ -277,7 +321,7 @@ def setup_admin_control_router(
             if not ok or bot_settings is None:
                 return
             report = await build_health_report(settings, bot_settings, lang=lang)
-            await message.answer(report[:3900], reply_markup=ak.stats_hub_keyboard(lang))
+            await message.answer(report[:3900], reply_markup=await _stats_kb(lang))
             return
 
         # Agent control requires full settings role
@@ -328,7 +372,7 @@ def setup_admin_control_router(
 
         if action == "stats_report":
             report = await build_bot_stats_report(settings, metrics)
-            await message.answer(report[:3900], reply_markup=ak.stats_hub_keyboard(lang))
+            await message.answer(report[:3900], reply_markup=await _stats_kb(lang))
             return
 
         if action == "change_agent_api":

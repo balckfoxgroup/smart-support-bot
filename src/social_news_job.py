@@ -67,7 +67,7 @@ class CandidateNews:
     growth: int = 0
 
 
-# Maximum 20 fixed sources (Iran/internet focused).
+# Up to 80 configured sources (Iran + world official / tech news).
 DEFAULT_SOURCE_LIST: list[dict[str, str]] = [
     {"kind": "telegram", "name": "BBC فارسی", "url": "https://t.me/s/BBCPersian"},
     {"kind": "telegram", "name": "ایران اینترنشنال", "url": "https://t.me/s/iranintltv"},
@@ -196,6 +196,37 @@ def _next_tick(now: datetime, hhmm: list[tuple[int, int]]) -> datetime:
     return min(cands)
 
 
+def _published_today_after(settings: Settings, slot: datetime) -> bool:
+    """True if any news was published at/after this Iran-local slot today."""
+    slot_utc = slot.astimezone(ZoneInfo("UTC"))
+    for item in _load_publication_state(settings):
+        try:
+            published_at = datetime.fromisoformat(
+                str(item.get("published_at", "")).replace("Z", "+00:00")
+            )
+        except Exception:
+            continue
+        if published_at >= slot_utc:
+            return True
+    return False
+
+
+def _missed_slot_today(now: datetime, hhmm: list[tuple[int, int]], settings: Settings) -> datetime | None:
+    """If a scheduled slot today already passed with no post, return that slot for catch-up."""
+    base = now.astimezone(IRAN_TZ)
+    missed: datetime | None = None
+    for h, m in sorted(hhmm):
+        slot = base.replace(hour=h, minute=m, second=0, microsecond=0)
+        if slot > base:
+            continue
+        # Only catch up within 12h of the slot to avoid very old double-posts.
+        if base - slot > timedelta(hours=12):
+            continue
+        if not _published_today_after(settings, slot):
+            missed = slot
+    return missed
+
+
 def _topic_importance(text: str) -> float:
     normalized = (text or "").lower()
     return max(
@@ -237,7 +268,8 @@ def _is_primary_source_link(url: str) -> bool:
 
 def _is_fresh(news: CandidateNews) -> bool:
     if news.published is None:
-        return False
+        # Telegram/RSS scrapes sometimes omit datetime; allow if already age-gated at fetch.
+        return True
     published = news.published
     if published.tzinfo is None:
         published = published.replace(tzinfo=ZoneInfo("UTC"))
@@ -603,38 +635,132 @@ async def _translate_to_fa(text: str) -> str:
         return src
 
 
+_JUNK_TEXT_MARKERS = (
+    "کلمات کلیدی",
+    "جستجو شده",
+    "داغ‌ترین",
+    "داغ ترین",
+    "بیشتر بخوانید",
+    "مطالب مرتبط",
+    "پربازدید",
+    "پیشنهاد سردبیر",
+    "اشتراک‌گذاری",
+    "دیدگاه شما",
+    "نظرات کاربران",
+    "آخرین کلمات",
+    "related posts",
+    "trending",
+    "keywords",
+    "tags:",
+    "metaverse",
+    "openai",
+    "huawei",
+    "bloomberg",
+    "tim cook",
+    "iphone fold",
+)
+
+
+def _latin_token_ratio(text: str) -> float:
+    tokens = re.findall(r"[A-Za-z\u0600-\u06ff\u200c]{2,}", text or "")
+    if not tokens:
+        return 0.0
+    latin = sum(1 for t in tokens if re.fullmatch(r"[A-Za-z]{2,}", t))
+    return latin / max(1, len(tokens))
+
+
+def _is_junk_news_text(text: str) -> bool:
+    """Detect Digiato-style keyword salad / sidebar chrome mistaken for article body."""
+    raw = (text or "").strip()
+    if not raw:
+        return True
+    low = raw.lower()
+    if any(m in low or m in raw for m in _JUNK_TEXT_MARKERS):
+        # Short genuine mentions of a brand in a real sentence are OK;
+        # long tag clouds almost always trip several markers + high Latin ratio.
+        if _latin_token_ratio(raw) >= 0.25 or sum(1 for m in _JUNK_TEXT_MARKERS if m in low or m in raw) >= 2:
+            return True
+    if _latin_token_ratio(raw) >= 0.45:
+        return True
+    # Many tiny comma/pipe-separated tags
+    if raw.count("،") + raw.count(",") >= 8 and len(raw) < 500:
+        return True
+    return False
+
+
+def _clean_source_text(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", (text or "").strip())
+    if not cleaned or _is_junk_news_text(cleaned):
+        return ""
+    return cleaned[:6000]
+
+
+def _source_quality_score(text: str) -> int:
+    raw = (text or "").strip()
+    if not raw or _is_junk_news_text(raw):
+        return 0
+    score = 0
+    if _has_persian(raw):
+        score += 3
+    if _is_iran_related(raw):
+        score += 2
+    if _contains_keywords(raw):
+        score += 2
+    # Prefer coherent length without being a tag dump.
+    if 120 <= len(raw) <= 3500:
+        score += 2
+    score -= int(_latin_token_ratio(raw) * 6)
+    return max(0, score)
+
+
 async def _fetch_article_excerpt(url: str) -> str:
-    """Fetch useful article text for factual AI summarization."""
+    """Fetch useful article text for factual AI summarization (skip tags/sidebars)."""
     try:
         async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
             r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
-        html_text = r.text
-        # Prefer OpenGraph description if available.
-        og = re.search(
-            r'property=["\']og:description["\']\s+content=["\']([^"\']+)["\']',
-            html_text,
-            flags=re.I,
+        soup = BeautifulSoup(r.text, "html.parser")
+        for tag in soup(["script", "style", "noscript", "nav", "footer", "aside", "form"]):
+            tag.decompose()
+        for junk in soup.select(
+            ".tags, .tag, .post-tags, .related, .related-posts, .sidebar, "
+            ".share, .social, .breadcrumb, .comments, .comment, "
+            "[class*='keyword'], [class*='related'], [id*='related']"
+        ):
+            junk.decompose()
+
+        desc = ""
+        og = soup.find("meta", attrs={"property": "og:description"})
+        if og and og.get("content"):
+            desc = re.sub(r"\s+", " ", html.unescape(str(og["content"]))).strip()
+        if not desc:
+            md = soup.find("meta", attrs={"name": "description"})
+            if md and md.get("content"):
+                desc = re.sub(r"\s+", " ", html.unescape(str(md["content"]))).strip()
+
+        body = (
+            soup.select_one("article")
+            or soup.select_one(".entry-content, .post-content, .article-content, .content-body, .post-body")
+            or soup.select_one("main")
+            or soup.body
         )
-        if og:
-            desc = re.sub(r"\s+", " ", html.unescape(og.group(1))).strip()
-        else:
-            desc = ""
-        # Fallback: collect paragraph text.
-        paras = re.findall(r"<p[^>]*>(.*?)</p>", html_text, flags=re.I | re.S)
-        cleaned: list[str] = []
-        for p in paras[:40]:
-            txt = re.sub(r"<[^>]+>", " ", p)
-            txt = re.sub(r"\s+", " ", html.unescape(txt)).strip()
-            if len(txt) >= 60:
-                cleaned.append(txt)
-            if len(cleaned) >= 12:
+        paras: list[str] = []
+        root = body or soup
+        for p in root.find_all(["p", "h2"]):
+            txt = re.sub(r"\s+", " ", p.get_text(" ", strip=True)).strip()
+            if len(txt) < 60 or _is_junk_news_text(txt):
+                continue
+            paras.append(txt)
+            if len(paras) >= 8:
                 break
-        combined = " ".join(([desc] if desc else []) + cleaned)
-        if combined:
-            return combined[:6000]
+
+        parts = []
+        if desc and not _is_junk_news_text(desc):
+            parts.append(desc)
+        parts.extend(paras)
+        combined = "\n".join(parts).strip()
+        return _clean_source_text(combined)
     except Exception:
         return ""
-    return ""
 
 
 def _is_meta_or_reject_text(text: str) -> bool:
@@ -643,6 +769,8 @@ def _is_meta_or_reject_text(text: str) -> bool:
     if not normalized:
         return True
     if _contains_prompt_leak(normalized):
+        return True
+    if _is_junk_news_text(normalized):
         return True
     needles = (
         "رد می‌کنم",
@@ -661,24 +789,226 @@ def _is_meta_or_reject_text(text: str) -> bool:
     return any(n in normalized for n in needles)
 
 
+def _clean_news_title(title: str) -> str:
+    text = _strip_telegram_chrome(title or "")
+    text = re.sub(r"^[\W_🔋🌐📰📅🔗🎬🚨•\-–—]+", "", text).strip()
+    text = re.sub(r"\s+", " ", text).strip()
+    return " ".join(text.split()[:18])
+
+
+_POINT_EMOJIS = ("🔴", "⚖️", "📊", "⏳", "📌", "🛡", "📡", "💡")
+_BAD_START_TOKENS = (
+    "کرد", "است", "شد", "شده", "می‌شود", "ميشود", "بود", "باشند", "هستند",
+    "و", "که", "تا", "از", "به", "را", "در", "با", "برای", "نیز", "همچنین",
+)
+_BAD_END_TOKENS = (
+    "و", "که", "تا", "از", "به", "را", "در", "با", "برای", "یا", "اگر", "چون",
+)
+
+
+def _strip_telegram_chrome(text: str) -> str:
+    """Remove decorative channel emojis / separators that leak into captions."""
+    cleaned = text or ""
+    cleaned = re.sub(
+        r"[🔺🔻🔹🔸▪️▫️●○•▶►◀◆◇★☆✅❌⚠️❗️❗‼️⁉️🟩🟥🟦]+",
+        " ",
+        cleaned,
+    )
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+def _first_token(text: str) -> str:
+    m = re.match(r"[\u0600-\u06ff\u200cA-Za-z0-9]+", (text or "").strip())
+    return m.group(0) if m else ""
+
+
+def _last_token(text: str) -> str:
+    parts = re.findall(r"[\u0600-\u06ff\u200cA-Za-z0-9]+", (text or "").strip())
+    return parts[-1] if parts else ""
+
+
+def _is_incomplete_sentence(text: str) -> bool:
+    raw = _strip_telegram_chrome(text)
+    if not raw or len(raw) < 25:
+        return True
+    if raw[-1] not in ".!؟…" and _last_token(raw) in _BAD_END_TOKENS:
+        return True
+    if _first_token(raw) in _BAD_START_TOKENS:
+        return True
+    if _last_token(raw.rstrip(".!؟…")) in _BAD_END_TOKENS:
+        return True
+    if re.match(r"^(کرد|است|شد|شده)\b", raw):
+        return True
+    return False
+
+
+def _ensure_sentence_end(text: str) -> str:
+    raw = _strip_telegram_chrome(text).strip()
+    if not raw:
+        return ""
+    if raw[-1] not in ".!؟":
+        raw += "."
+    return raw
+
+
+def _text_overlap_ratio(a: str, b: str) -> float:
+    ta = set(re.findall(r"[\u0600-\u06ff\u200c]{3,}", (a or "").lower()))
+    tb = set(re.findall(r"[\u0600-\u06ff\u200c]{3,}", (b or "").lower()))
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / max(1, min(len(ta), len(tb)))
+
+
 def _normalize_detail_lines(raw: str) -> list[str]:
+    """Legacy plain-line normalizer (also used as quality fallback)."""
     lines: list[str] = []
     for line in (raw or "").splitlines():
         text = re.sub(r"^\s*(?:[-•*]|\d+[\.\)])\s*", "", line).strip()
-        text = re.sub(r"^(?:SUMMARY|خلاصه)\s*:\s*", "", text, flags=re.I)
+        text = re.sub(r"^(?:SUMMARY|خلاصه|LEAD|POINTS)\s*:\s*", "", text, flags=re.I)
+        text = re.sub(r"^[🔴⚖️📊⏳📌🛡📡💡]\s*", "", text)
+        text = _strip_telegram_chrome(text)
         if not text or not _has_persian(text) or _contains_prompt_leak(text):
             continue
-        if _is_meta_or_reject_text(text):
+        if _is_meta_or_reject_text(text) or _is_junk_news_text(text):
             continue
-        text = re.sub(r"\s+", " ", text)
-        # Eight concise lines plus the required template must fit Telegram's caption limit.
-        if len(text) < 25 or len(text) > 78:
+        if _is_incomplete_sentence(text):
             continue
-        if text[-1] not in ".!؟":
-            text += "."
+        text = _ensure_sentence_end(re.sub(r"\s+", " ", text))
+        if len(text) < 28 or len(text) > 160:
+            continue
         if text and text not in lines:
             lines.append(text)
-    return lines[:15]
+    return lines[:12]
+
+
+def _parse_editorial(summary: str) -> tuple[str, list[tuple[str, str, str]]]:
+    """Return (lead, [(emoji, label, body), ...]) from stored editorial summary."""
+    raw = (summary or "").strip()
+    if not raw:
+        return "", []
+    lead = ""
+    points: list[tuple[str, str, str]] = []
+    lead_m = re.search(
+        r"(?is)^\s*LEAD:\s*(.+?)(?=\n\s*POINTS:|\n\s*[🔴⚖️📊⏳📌🛡📡💡]|\Z)",
+        raw,
+    )
+    if lead_m:
+        lead = _ensure_sentence_end(_strip_telegram_chrome(lead_m.group(1)))
+    points_blob = raw
+    pm = re.search(r"(?im)^\s*POINTS:\s*$", raw)
+    if pm:
+        points_blob = raw[pm.end() :]
+    elif lead_m:
+        points_blob = raw[lead_m.end() :]
+    for line in points_blob.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = re.match(
+            r"^([🔴⚖️📊⏳📌🛡📡💡])\s*(?:\*\*)?([^:*\n]{2,40})(?:\*\*)?\s*[:：]\s*(.+)$",
+            line,
+        )
+        if not m:
+            plain = _ensure_sentence_end(
+                _strip_telegram_chrome(re.sub(r"^\s*(?:[-•*]|\d+[\.\)])\s*", "", line))
+            )
+            if (
+                _has_persian(plain)
+                and not _is_junk_news_text(plain)
+                and not _is_incomplete_sentence(plain)
+                and len(plain) >= 28
+            ):
+                emoji = _POINT_EMOJIS[len(points) % len(_POINT_EMOJIS)]
+                points.append((emoji, "نکته", plain[:140]))
+            continue
+        emoji = m.group(1)
+        label = _strip_telegram_chrome(m.group(2)).strip()[:28]
+        body = _ensure_sentence_end(_strip_telegram_chrome(m.group(3)))
+        if (
+            not _has_persian(label + body)
+            or _is_junk_news_text(body)
+            or _is_incomplete_sentence(body)
+            or len(body) < 28
+        ):
+            continue
+        if label in {"نکته", "نکته مهم", "جزئیات", "پیامد", "زمان‌بندی"}:
+            label = "نکته"
+        points.append((emoji, label, body[:150]))
+        if len(points) >= 5:
+            break
+    if not lead:
+        plain = _normalize_detail_lines(raw)
+        if plain:
+            lead = plain[0]
+            if not points:
+                for i, p in enumerate(plain[1:5]):
+                    points.append((_POINT_EMOJIS[i % len(_POINT_EMOJIS)], "نکته", p))
+    return lead, points
+
+
+def _editorial_quality_ok(summary: str, *, title: str = "") -> bool:
+    lead, points = _parse_editorial(summary)
+    if _is_junk_news_text(lead) or _is_incomplete_sentence(lead) or len(lead) < 45:
+        return False
+    if title and _text_overlap_ratio(lead, title) >= 0.85:
+        return False
+    if len(points) < 3:
+        return False
+    for _, _label, body in points:
+        if _is_incomplete_sentence(body) or _is_junk_news_text(body) or len(body) < 28:
+            return False
+    return True
+
+
+def _fallback_detail_lines(raw: str) -> list[str]:
+    """Split clean source text into complete Persian sentences."""
+    text = _clean_source_text(_strip_telegram_chrome(raw))
+    if not text or _source_quality_score(text) < 5:
+        return []
+    parts = [p.strip() for p in re.split(r"(?<=[.!?؟؛。])\s+", text) if p.strip()]
+    out: list[str] = []
+    for part in parts:
+        part = _ensure_sentence_end(_strip_telegram_chrome(part))
+        if _is_junk_news_text(part) or _is_incomplete_sentence(part):
+            continue
+        if len(part) < 28 or len(part) > 160:
+            continue
+        out.append(part)
+    return out[:8]
+
+
+def _build_editorial_fallback(raw: str, *, title: str = "", source: str = "") -> str:
+    """Build LEAD + POINTS from complete sentences only (never mid-clause chops)."""
+    lines = _fallback_detail_lines(raw)
+    src = (source or "منبع خبر").strip()
+    title_clean = _clean_news_title(title)
+    if len(lines) < 3:
+        if not title_clean or not _has_persian(title_clean):
+            return ""
+        lines = [
+            _ensure_sentence_end(f"به گزارش {src}، {title_clean}"),
+            _ensure_sentence_end(
+                f"این خبر توسط {src} منتشر شده و به حوزه اینترنت و ارتباطات مربوط است"
+            ),
+            _ensure_sentence_end("جزئیات بیشتر در لینک منبع قابل مشاهده است"),
+        ]
+    lead = lines[0]
+    if title_clean and _text_overlap_ratio(lead, title_clean) >= 0.85 and len(lines) > 1:
+        lead = lines[1]
+        point_bodies = [lines[0]] + lines[2:5]
+    else:
+        point_bodies = lines[1:5]
+    while len(point_bodies) < 3 and len(lines) > len(point_bodies) + 1:
+        point_bodies.append(lines[len(point_bodies) + 1])
+    if len(point_bodies) < 3:
+        return ""
+    labels = ("اصل خبر", "جزئیات بیشتر", "حمایت و اقدام", "پیگیری", "جمع‌بندی")
+    out = [f"LEAD: {lead}", "", "POINTS:"]
+    for i, body in enumerate(point_bodies[:4]):
+        out.append(f"{_POINT_EMOJIS[i % len(_POINT_EMOJIS)]} {labels[i % len(labels)]}: {body}")
+    draft = "\n".join(out)
+    return draft if _editorial_quality_ok(draft, title=title_clean) else ""
 
 
 async def _prepare_news_content(
@@ -687,113 +1017,162 @@ async def _prepare_news_content(
     *,
     rules_prompt: str | None = None,
 ) -> None:
-    # Telegram previews already contain the complete post text. Scraping their
-    # wrapper page as an article can return channel boilerplate instead.
     article = "" if "t.me/" in news.link else await _fetch_article_excerpt(news.link)
-    source_text = article or news.summary or news.title
+    original = _clean_source_text(_strip_telegram_chrome(news.summary or news.title))
+    article_q = _source_quality_score(article)
+    original_q = _source_quality_score(original)
+    if article_q >= original_q and article_q > 0:
+        source_text = article
+    else:
+        source_text = original or article
+    if not source_text:
+        news.summary = ""
+        return
+
     system_prompt = (
         (rules_prompt or "").strip()
         or (
-            "تو ربات هوش مصنوعی تحلیلگر اخبار اینترنت ایران هستی. "
-            "خبرهای حوزه اینترنت ایران، فیلترینگ، محدودیت اتصال، VPN، اختلال شبکه، "
-            "DNS، حملات سایبری، اپراتورها و دیتاسنترها را رسمی، کوتاه و دقیق پردازش می‌کنی. "
-            "شبکه‌های اجتماعی فقط برای کشف موضوع و سنجش توجه استفاده شده‌اند. "
-            "هیچ ادعا، عدد، نقل‌قول یا نتیجه‌ای خارج از متن منبع اضافه نکن."
+            "تو ویراستار خبری کانال تلگرام Black Fox VPN هستی. "
+            "خبر را برای مخاطب فارسی، رسمی و خوانا ادیت کن. "
+            "فقط از اطلاعات موجود در متن منبع استفاده کن؛ ادعا اضافه نکن. "
+            "هر نکته باید یک جملهٔ کامل و مستقل باشد؛ جملهٔ ناقص ممنوع است. "
+            "تگ، ایموجی تزئینی کانال مبدأ، کلمات کلیدی جستجو و مطالب مرتبط را حذف کن."
         )
     )
-    ai = AIClient(settings)
-    try:
-        response = await ai.chat(
-            [
-                {
-                    "role": "system",
-                    "content": system_prompt,
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        "خبر زیر پس از بررسی منابع و رتبه‌بندی اهمیت انتخاب شده است.\n"
-                        f"تعداد رسانه‌های تأییدکننده: {news.corroboration}\n"
-                        "خروجی فقط این دو بخش را داشته باشد:\n"
-                        "TITLE: تیتر فارسی رسمی، غیرکلیک‌بیتی و حداکثر ۸ کلمه\n"
-                        "SUMMARY:\n"
-                        "- بین ۸ تا ۱۰ خط فارسی، هر خط یک جملهٔ کامل ۲۵ تا ۷۵ نویسه\n"
-                        "- مفهوم و اطلاعات مهم خبر حفظ شود؛ تکرار، تحلیل طولانی و توضیح اضافی حذف شود\n"
-                        "- اگر متن حاوی ادعای تأییدنشده است، آن را قطعی بازنویسی نکن\n\n"
-                        f"عنوان اصلی: {news.title}\n"
-                        f"محتوای اصلی:\n{source_text[:6000]}"
-                    ),
-                },
-            ],
-            temperature=0.15,
-            max_tokens=1400,
-        )
-    except AIClientError:
-        response = ""
-    finally:
-        await ai.close()
+    user_prompt = (
+        "خبر را مثل پست ادیت‌شدهٔ حرفه‌ای تلگرام بنویس.\n"
+        "خروجی دقیقاً با این قالب باشد:\n"
+        "TITLE: تیتر فارسی کامل (حداکثر ۱۸ کلمه، بدون ایموجی)\n"
+        "LEAD: یک پاراگراف ۲ جمله‌ای که اصل خبر را بگوید؛ تکرار عین تیتر ممنوع\n"
+        "POINTS:\n"
+        "🔴 برچسب کوتاه: یک جملهٔ کامل مستقل فارسی\n"
+        "⚖️ برچسب کوتاه: یک جملهٔ کامل مستقل فارسی\n"
+        "📊 برچسب کوتاه: یک جملهٔ کامل مستقل فارسی\n"
+        "⏳ برچسب کوتاه: یک جملهٔ کامل مستقل فارسی\n"
+        "قواعد سخت:\n"
+        "- هر نکته فاعل+فعل کامل داشته باشد؛ با «کرد/است/شد/و/که» شروع نشود\n"
+        "- هیچ جمله‌ای وسط حرف تمام نشود (آخرش و/که/تا/از ممنوع)\n"
+        "- لید نباید کپی تیتر باشد\n"
+        "- برچسب‌ها معنادار باشند (مثل بودجه، حمایت، زمان، اقدام)\n"
+        "- بدون تگ و بدون لیست برند\n\n"
+        f"منبع: {news.source}\n"
+        f"عنوان اصلی: {news.title}\n"
+        f"متن منبع:\n{source_text[:6000]}"
+    )
 
-    title_match = re.search(r"(?im)^\s*\**TITLE:\**\s*(.+)$", response)
+    async def _ask_ai(extra: str = "") -> str:
+        ai = AIClient(settings)
+        try:
+            return await ai.chat(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt + extra},
+                ],
+                temperature=0.15,
+                max_tokens=1600,
+            )
+        except AIClientError:
+            return ""
+        finally:
+            await ai.close()
+
+    response = await _ask_ai()
+    if _is_meta_or_reject_text(response):
+        response = ""
+    if not (response or "").strip():
+        response = await _ask_ai(
+            "\n\nپاسخ قبلی خالی بود. فقط همان قالب TITLE/LEAD/POINTS را با جمله‌های کامل بنویس."
+        )
+        if _is_meta_or_reject_text(response):
+            response = ""
+
+    title_match = re.search(r"(?im)^\s*\**TITLE:\**\s*(.+)$", response or "")
     if (
         title_match
         and _has_persian(title_match.group(1))
         and not _contains_prompt_leak(title_match.group(1))
+        and not _is_junk_news_text(title_match.group(1))
     ):
-        news.title = " ".join(title_match.group(1).strip().split()[:8])
+        news.title = _clean_news_title(title_match.group(1))
     else:
-        translated = await _translate_to_fa(news.title)
-        news.title = " ".join(translated.split()[:8])
+        translated = await _translate_to_fa(_clean_news_title(news.title))
+        news.title = _clean_news_title(translated)
 
-    details_blob = response
-    marker = re.search(r"(?im)^\s*\**SUMMARY:\**\s*$", response)
-    if marker:
-        details_blob = response[marker.end() :]
-    details = _normalize_detail_lines(details_blob)
+    lead_m = re.search(
+        r"(?is)^\s*\**LEAD:\**\s*(.+?)(?=\n\s*\**POINTS:\**|\n\s*[🔴⚖️📊⏳📌]|\Z)",
+        response or "",
+    )
+    points_m = re.search(r"(?im)^\s*\**POINTS:\**\s*$", response or "")
+    editorial = ""
+    if lead_m and points_m:
+        lead = _ensure_sentence_end(_strip_telegram_chrome(lead_m.group(1)))
+        points_blob = (response or "")[points_m.end() :]
+        rebuilt = [f"LEAD: {lead}", "", "POINTS:"]
+        for line in points_blob.splitlines():
+            line = line.strip()
+            if re.match(r"^[🔴⚖️📊⏳📌🛡📡💡]", line):
+                rebuilt.append(line)
+        editorial = "\n".join(rebuilt)
 
-    # If the model answered with rejection/meta reasoning, wipe summary so caller skips.
-    if _is_meta_or_reject_text(response) or _is_meta_or_reject_text(details_blob):
+    if not _editorial_quality_ok(editorial, title=news.title):
+        editorial = _build_editorial_fallback(
+            await _translate_to_fa(source_text),
+            title=news.title,
+            source=news.source,
+        )
+    if not _editorial_quality_ok(editorial, title=news.title):
         news.summary = ""
         return
-
-    # Do not fabricate filler or splice translated fragments. If AI cannot produce
-    # enough complete factual sentences, the caller skips this candidate.
-    news.summary = "\n".join(details[:15])
+    news.summary = editorial
 
 
 def _render_news_caption(news: CandidateNews) -> str:
-    title_fa = (news.title or "").strip()
-    if not _has_persian(title_fa):
-        title_fa = "آخرین خبر مرتبط با اینترنت و فیلترینگ ایران"
+    """Editorial Telegram caption: headline + lead + emoji key points + source."""
+    title_fa = _clean_news_title(news.title or "")
+    if not _has_persian(title_fa) or _is_junk_news_text(title_fa):
+        title_fa = "آخرین خبر مرتبط با اینترنت و ارتباطات ایران"
 
-    published = news.published or datetime.now(ZoneInfo("UTC"))
-    local_date = published.astimezone(IRAN_TZ)
-    shamsi = jdatetime.datetime.fromgregorian(datetime=local_date)
-    published_text = shamsi.strftime("%Y/%m/%d - %H:%M")
+    lead, points = _parse_editorial(news.summary or "")
+    lead = _ensure_sentence_end(_strip_telegram_chrome(lead))
+    if not lead or _is_incomplete_sentence(lead):
+        lead = _ensure_sentence_end(
+            f"به گزارش {(news.source or 'منبع خبر').strip()}، {title_fa}"
+        )
+    clean_points: list[tuple[str, str, str]] = []
+    for emoji, label, body in points:
+        body = _ensure_sentence_end(_strip_telegram_chrome(body))
+        label = _strip_telegram_chrome(label) or "نکته"
+        if _is_incomplete_sentence(body) or len(body) < 28:
+            continue
+        clean_points.append((emoji, label[:28], body[:150]))
+    if len(clean_points) < 3:
+        for i, line in enumerate(_normalize_detail_lines(news.summary or "")[:4]):
+            clean_points.append((_POINT_EMOJIS[i % len(_POINT_EMOJIS)], "نکته", line))
+
     ref = f'<a href="{html.escape(news.link, quote=True)}">مشاهده منبع</a>'
+    source_name = (news.source or "").strip() or "منبع خبر"
     lines: list[str] = [
-        "--------------------------------",
+        f"🚨 <b>{html.escape(title_fa)}</b>",
         "",
-        "🌐 خبر کوتاه اینترنت ایران",
+        html.escape(lead),
         "",
-        html.escape(" ".join(title_fa.split()[:8])),
+        "⚙️ <b>نکات کلیدی:</b>",
         "",
-        "📅 تاریخ:",
-        published_text,
-        "",
-        "📰 خلاصه خبر:",
     ]
-    for detail in _normalize_detail_lines(news.summary)[:8]:
-        lines.append(html.escape(detail))
+    for emoji, label, body in clean_points[:4]:
+        lines.append(f"{emoji} <b>{html.escape(label)}:</b> {html.escape(body)}")
     lines.extend(
         [
             "",
-            "🔗 منبع:",
-            ref,
+            f"🔗 منبع: {html.escape(source_name)} | {ref}",
             "",
-            "--------------------------------",
+            "🦊 Black Fox VPN | @blackFoxVPNN",
         ]
     )
-    return "\n".join(lines)
+    caption = "\n".join(lines)
+    if len(caption) > 1024:
+        caption = caption[:1000].rsplit("\n", 1)[0] + "\n\n🔗 " + ref
+    return caption
 
 
 def _load_sources(project_root: Path) -> list[dict[str, str]]:
@@ -802,7 +1181,7 @@ def _load_sources(project_root: Path) -> list[dict[str, str]]:
         raw = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(raw, list):
             out: list[dict[str, str]] = []
-            for item in raw[:20]:
+            for item in raw[:80]:
                 if not isinstance(item, dict):
                     continue
                 kind = str(item.get("kind") or "").strip()
@@ -810,7 +1189,7 @@ def _load_sources(project_root: Path) -> list[dict[str, str]]:
                 url = str(item.get("url") or "").strip()
                 if kind and name and url:
                     out.append({"kind": kind, "name": name, "url": url})
-            if len(out) >= 15:
+            if len(out) >= 20:
                 return out
     except Exception:
         pass
@@ -948,12 +1327,12 @@ def _soft_single_source_ok(item: CandidateNews) -> bool:
     engagement = int(item.reactions) + int(item.comments) + int(item.shares) + int(item.growth)
     views = int(item.views)
     if _is_primary_source_link(item.link):
-        return item.importance >= 0.45 or engagement >= 15 or views >= 150
-    # Telegram / aggregator: require topic strength (views alone are not enough).
+        return item.importance >= 0.40 or engagement >= 10 or views >= 80
+    # Telegram / aggregator: topic strength still required, but not extreme.
     if item.source in NON_PRIMARY_SOURCES:
-        return item.importance >= 0.85
-    return item.importance >= 0.70 or (
-        item.importance >= 0.55 and (views >= 800 or engagement >= 40)
+        return item.importance >= 0.70
+    return item.importance >= 0.60 or (
+        item.importance >= 0.50 and (views >= 400 or engagement >= 25)
     )
 
 
@@ -964,6 +1343,7 @@ async def run_social_news_job(
 ) -> None:
     log = logging.getLogger("blackfox-agent-bot.social-news")
     sources = _load_sources(settings.project_root)
+    catchup_done = False
 
     while True:
         times_raw = settings.social_news_times
@@ -975,9 +1355,22 @@ async def run_social_news_job(
             rules = await bot_settings.effective_social_rules()
         hhmm = _parse_times(times_raw)
         log.info("Social news scheduler active (times=%s sources=%d)", hhmm, len(sources))
-        nxt = _next_tick(datetime.now(IRAN_TZ), hhmm)
-        wait_seconds = max(1, int((nxt - datetime.now(IRAN_TZ)).total_seconds()))
-        log.info("Next social news check at %s (in %ss)", nxt.isoformat(), wait_seconds)
+        now = datetime.now(IRAN_TZ)
+        # After restart, catch up a missed morning/evening slot instead of jumping to the next one.
+        if not catchup_done:
+            missed = _missed_slot_today(now, hhmm, settings)
+            catchup_done = True
+            if missed is not None:
+                log.info("Catch-up social news for missed slot %s", missed.isoformat())
+                wait_seconds = 1
+            else:
+                nxt = _next_tick(now, hhmm)
+                wait_seconds = max(1, int((nxt - datetime.now(IRAN_TZ)).total_seconds()))
+                log.info("Next social news check at %s (in %ss)", nxt.isoformat(), wait_seconds)
+        else:
+            nxt = _next_tick(datetime.now(IRAN_TZ), hhmm)
+            wait_seconds = max(1, int((nxt - datetime.now(IRAN_TZ)).total_seconds()))
+            log.info("Next social news check at %s (in %ss)", nxt.isoformat(), wait_seconds)
         await asyncio.sleep(wait_seconds)
         try:
             if bot_settings is not None:
@@ -1077,7 +1470,7 @@ async def _rank_news_from_sources(
             return await _fetch_rss(client, src)
 
         batches = await asyncio.gather(
-            *(fetch_source(src) for src in sources[:20]),
+            *(fetch_source(src) for src in sources[:80]),
             return_exceptions=True,
         )
         all_items = [
@@ -1126,7 +1519,7 @@ async def _rank_news_from_sources(
             soft_pool = [
                 item
                 for item in cluster
-                if item.source not in NON_PRIMARY_SOURCES or item.importance >= 0.85
+                if item.source not in NON_PRIMARY_SOURCES or item.importance >= 0.70
             ]
             if soft_pool:
                 candidate = max(
@@ -1164,9 +1557,12 @@ async def _pick_publishable_news(
     sources: list[dict[str, str]],
     *,
     rules_prompt: str | None = None,
+    min_detail_lines: int = 4,
 ) -> CandidateNews | None:
     state = _load_publication_state(settings)
-    for news in (await _rank_news_from_sources(sources, settings))[:12]:
+    ranked = await _rank_news_from_sources(sources, settings)
+    fallback: CandidateNews | None = None
+    for news in ranked[:15]:
         if (
             not _is_fresh(news)
             or _was_published(news, state)
@@ -1174,8 +1570,12 @@ async def _pick_publishable_news(
         ):
             continue
         await _prepare_news_content(settings, news, rules_prompt=rules_prompt)
-        # Softened from 8 → 4 so quiet days still produce a channel post.
-        if len(_normalize_detail_lines(news.summary)) >= 4:
+        if not _editorial_quality_ok(news.summary or "", title=news.title or ""):
+            continue
+        lead, points = _parse_editorial(news.summary or "")
+        if len(points) >= max(3, min_detail_lines - 1):
             return news
-    return None
-
+        if fallback is None and len(points) >= 3 and len(lead) >= 45 and not _is_incomplete_sentence(lead):
+            fallback = news
+    # Quiet-day / catch-up: accept a shorter but still usable caption.
+    return fallback

@@ -145,16 +145,20 @@ def ensure_button_constants(source: str, *, button_id: str, label_fa: str, label
 
 def codegen_system_prompt() -> str:
     return (
-        "You write ONE Python module for a Smart Support Bot admin settings button.\n"
+        "You write ONE Python module for a Smart Support Bot admin button.\n"
         "Return ONLY a python code block.\n"
         "Contract:\n"
-        "- Define BUTTON_ID, LABEL_FA, LABEL_EN constants.\n"
+        "- Define BUTTON_ID, LABEL_FA, LABEL_EN constants. LABEL_* must be a SHORT button title "
+        "(max ~28 chars), never the whole admin instruction.\n"
         "- Define: async def run(message, *, lang, settings, bot_settings):\n"
+        "- Implement REAL useful behavior matching the admin request (list users, show a report, "
+        "open a card, toggle something via bot_settings APIs when available).\n"
         "- You may import from: aiogram, asyncio, json, logging, re, datetime, typing,\n"
-        "  src.health_report, src.storage.bot_settings, src.ui.admin_keyboards, src.branding.\n"
+        "  src.health_report, src.storage.bot_settings, src.storage.users, src.ui.admin_keyboards, "
+        "src.branding, src.bot_stats_report.\n"
         "- Forbidden: os, sys, subprocess, eval, exec, open, socket, pathlib write, network scrape,\n"
         "  reading .env, changing creator contact, deleting files.\n"
-        "- Keep it short and useful. Reply to the admin with message.answer(...).\n"
+        "- Keep it short and useful. Always message.answer(...).\n"
         "- Persian UI text must start sentences with Persian words when lang is fa.\n"
     )
 
@@ -296,8 +300,30 @@ def _loader_source() -> str:
 
 
 def guess_labels_from_request(text: str) -> tuple[str, str]:
-    """Best-effort label extraction from admin free text."""
-    chunk = text
+    """Best-effort short label extraction from admin free text (not the whole prompt)."""
+    raw = (text or "").strip()
+    # Explicit name patterns: به نام X / named X / «X» / "X" / (X)
+    named = re.search(
+        r"(?:به\s*نام|با\s*نام|named|name\s*[:=]|title\s*[:=])\s*[(\[「«\"']?([^)\]」»\"'\n]{2,40})",
+        raw,
+        flags=re.IGNORECASE,
+    )
+    if named:
+        label = named.group(1).strip(" :-،,")
+        if label:
+            return label[:40], label[:40]
+    quoted = re.search(r"[«\"']([^«\"']{2,40})[»\"']", raw)
+    if quoted:
+        label = quoted.group(1).strip()
+        if label and not any(x in label for x in ("کلید بساز", "create button", "در قسمت")):
+            return label[:40], label[:40]
+    paren = re.search(r"[\(（]\s*([^\)）\n]{2,40})\s*[\)）]", raw)
+    if paren:
+        label = paren.group(1).strip(" :-،,")
+        if label and not any(x in label for x in ("کلید بساز", "create button", "در قسمت")):
+            return label[:40], label[:40]
+
+    chunk = raw
     for cue in (
         "کلید بساز",
         "دکمه بساز",
@@ -308,15 +334,31 @@ def guess_labels_from_request(text: str) -> tuple[str, str]:
         if cue in chunk:
             chunk = chunk.split(cue, 1)[-1].strip(" :-")
             break
-    # drop action= tokens for label
     parts = []
     for part in chunk.replace("—", " ").split():
         if "=" in part:
             continue
         parts.append(part)
     label = " ".join(parts).strip().strip("\"'«»")
-    if not label:
-        label = "کلید سفارشی"
-    if len(label) > 40:
-        label = label[:40].rstrip()
-    return label, label
+    # If still looks like a full instruction, fall back to a short default.
+    bad_starts = ("در قسمت", "از منوی", "برای من", "please", "in the", "create")
+    if (not label) or len(label) > 36 or any(label.startswith(b) for b in bad_starts):
+        # Prefer a meaningful short fragment: «لیست کاربران»
+        for hint in ("لیست کاربران", "کاربران", "آمار", "گزارش", "user list", "users"):
+            if hint in raw.lower() or hint in raw:
+                label = hint if hint != "user list" else "User List"
+                break
+        else:
+            label = "کلید جدید"
+    return label[:40], label[:40]
+
+
+def guess_menu_from_request(text: str) -> str:
+    raw = text or ""
+    low = raw.lower()
+    if "آمار" in raw or any(x in low for x in ("stats", "statistics")):
+        return "stats"
+    if "سلامت" in raw or "health" in low:
+        return "health"
+    return "settings"
+

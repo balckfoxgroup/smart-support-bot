@@ -1056,12 +1056,26 @@ def admins_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
     )
 
 
-def stats_hub_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+def stats_hub_keyboard(
+    lang: str | None = "en",
+    *,
+    generated_buttons: list[dict] | None = None,
+) -> ReplyKeyboardMarkup:
     buttons = _kb_buttons(
         "stats",
         ["stats_report", "health_status", "stats_back"],
         lang,
     )
+    # Generated buttons targeted at stats menu
+    for item in list(generated_buttons or []):
+        if not item.get("enabled", True):
+            continue
+        if str(item.get("menu") or "settings") != "stats":
+            continue
+        lab = str(item.get("label_fa") or item.get("label_en") or "").strip()
+        if lab:
+            buttons.insert(-1, KeyboardButton(text=lab))
+    refresh_custom_button_labels(list(generated_buttons or []))
     return ReplyKeyboardMarkup(
         keyboard=_chunk_rows(buttons),
         resize_keyboard=True,

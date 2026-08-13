@@ -32,7 +32,7 @@ Fresh installs ship with **no pre-filled products**. In Settings open **Products
 - Add any number of products (name, emoji, short summary)
 - Edit or delete products anytime
 - Each product becomes a main-menu key and a `knowledge/product_catalogs/<id>.json` file
-- Use **Build / Enrich Catalog** on a product to attach richer content and photos
+- Use **Build / Enrich Catalog** on a product: send photos/files, then build — vision helps when screenshots are the main material
 
 Sample JSON lives only under `knowledge/product_catalogs.examples/` (not loaded into the menu).
 
@@ -48,14 +48,25 @@ Private chats, group replies, and menu flows all use the same AI stack:
 Users and admins benefit from search over knowledge and catalogs. The bot prefers grounded answers over hallucinations.
 
 #### 4) News discovery & scheduled posts
-Optional social/news job finds relevant internet news and can publish short posts to your channel/account on a schedule.
+Optional social/news job finds Iran/internet-related news from **up to 80 sources** (official Iranian outlets, world news RSS, Telegram channels, Reddit/HN) and publishes to your channel on a schedule (default `10:00,17:00` Iran time).
+
+Each post is AI-edited into a Telegram-ready format:
+
+- Bold headline with 🚨  
+- Short lead paragraph (not a copy of the title)  
+- Key points with emojis (🔴 ⚖️ 📊 ⏳) — each point is a complete sentence  
+- Source link + Black Fox footer  
+
+Incomplete sentences, keyword-salad scrapes, and decorative source emojis are filtered out. After bot restarts, a missed daily slot can catch up once.
 
 #### 5) Chat with Bot (admin) — change the bot from Telegram
 In the admin settings menu open **Chat with Bot** (`گفتگو با ربات`):
 
-- Reconfigure destinations, templates, owner info, and more in natural language / guided flow
-- No SSH required for day-to-day settings
-- Agent control plane can also chat with AI providers for model/API changes
+- Reconfigure destinations, templates, owner info, and more in natural language / guided flow  
+- Understand uploaded screenshots (vision) for UI/context requests  
+- Ask AI to **create real admin buttons** with working code (safe-change watchdog) and place them on Settings or Statistics  
+- No SSH required for day-to-day settings  
+- Agent control plane can also chat with AI providers for model/API changes  
 
 #### 6) Safe Change / auto-restore
 For sensitive updates the independent watchdog:
@@ -170,7 +181,7 @@ More projects: https://github.com/balckfoxgroup?tab=repositories
 - هر تعداد محصول اضافه کنید (نام، ایموجی، خلاصه کوتاه)
 - هر وقت بخواهید ویرایش یا حذف کنید
 - هر محصول یک کلید در منوی اصلی و یک فایل `knowledge/product_catalogs/<id>.json` می‌شود
-- با **ساخت/تکمیل کاتالوگ** روی همان محصول، محتوا و عکس غنی‌تر وصل کنید
+- با **ساخت/تکمیل کاتالوگ** روی همان محصول، عکس و فایل بفرستید؛ اگر فقط اسکرین‌شات باشد هم با vision ساخته می‌شود
 
 نمونهٔ JSON فقط در `knowledge/product_catalogs.examples/` است و وارد منو نمی‌شود.
 
@@ -186,14 +197,25 @@ More projects: https://github.com/balckfoxgroup?tab=repositories
 جستجو روی دانش و کاتالوگ کمک می‌کند جواب‌ها واقعی و مفید باشند، نه حدس بی‌پایه.
 
 #### ۴) جستجو و انتشار خبر
-جاب اختیاری خبر، اخبار مرتبط را پیدا می‌کند و می‌تواند در زمان‌بندی مشخص برای کانال/اکانت شما پست کوتاه بسازد.
+جاب اختیاری خبر، اخبار مرتبط با اینترنت/فیلترینگ را از **تا ۸۰ منبع** (سایت‌های رسمی ایران و جهان، کانال تلگرام، Reddit/HN) پیدا می‌کند و طبق زمان‌بندی (پیش‌فرض `10:00` و `17:00` به وقت ایران) در کانال منتشر می‌کند.
+
+هر پست با AI به قالب تلگرامی ادیت می‌شود:
+
+- تیتر بولد با 🚨  
+- لید کوتاه (تکرار عین تیتر نیست)  
+- نکات کلیدی با ایموجی (🔴 ⚖️ 📊 ⏳) — هر نکته جملهٔ کامل  
+- لینک منبع + برند Black Fox  
+
+جمله‌های ناقص، تگ‌های بی‌ربط سایت، و ایموجی تزئینی مبدأ فیلتر می‌شوند. اگر ربات بعد از ساعت اسلات ری‌استارت شود، یک‌بار catch-up انجام می‌شود.
 
 #### ۵) گفتگو با ربات — تغییر ربات از خود تلگرام
 در منوی تنظیمات ادمین، گزینه **گفتگو با ربات** را باز کنید:
 
-- مقصد پیام‌ها، قالب‌ها، اطلاعات اصلی و بیشتر را از همان‌جا تغییر دهید
-- برای کارهای روزمره نیازی به SSH نیست
-- برای تعویض مدل/API هم گفتگو با ایجنت در کنترل‌پنل ادمین هست
+- مقصد پیام‌ها، قالب‌ها، اطلاعات اصلی و بیشتر را از همان‌جا تغییر دهید  
+- عکس/اسکرین‌شات ارسالی را می‌فهمد (vision) و در کار استفاده می‌کند  
+- می‌توانید بخواهید **کلید ادمین واقعی با کد** بسازد (safe-change) و در منوی تنظیمات یا آمار بگذارد  
+- برای کارهای روزمره نیازی به SSH نیست  
+- برای تعویض مدل/API هم گفتگو با ایجنت در کنترل‌پنل ادمین هست  
 
 #### ۶) تغییر امن و Restore خودکار
 برای تغییرات حساس، نگهبان مستقل این کار را می‌کند:
@@ -275,8 +297,9 @@ journalctl -u smart-support-bot.service -f
 از همراهی و Star شما سپاسگزاریم.
 
 
-### Settings Backup / Health / Admin Roles
+### Settings Backup / Health / Admin Roles / News
 
-- Export/Import settings JSON from admin Settings
-- Daily health report + manual Health Status
-- Extra admins: `full` (settings) or `stats` (stats/health only)
+- Export/Import settings JSON from admin Settings  
+- Daily health report + manual Health Status  
+- Extra admins: `full` (settings) or `stats` (stats/health only)  
+- Channel news: editorial AI posts, up to 80 sources, schedule `10:00,17:00` (Iran), catch-up after restart  
