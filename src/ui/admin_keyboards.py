@@ -177,6 +177,10 @@ _LABELS: dict[str, dict[Lang, str]] = {
         "fa": "🏷 نوع اسلات (خبر/ثابت/کانفیگ)",
         "en": "🏷 Slot Kind (news/static/config)",
     },
+    "toggle_slot_enabled": {
+        "fa": "🔛 روشن/خاموش اسلات",
+        "en": "🔛 Toggle Slot On/Off",
+    },
     "owner_site": {
         "fa": "🌐 آدرس سایت",
         "en": "🌐 Site URL",
@@ -911,6 +915,7 @@ def target_edit_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
 def slot_edit_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
+            [KeyboardButton(text=label("toggle_slot_enabled", lang))],
             [KeyboardButton(text=label("edit_dest", lang))],
             [KeyboardButton(text=label("edit_template", lang))],
             [KeyboardButton(text=label("edit_schedule", lang))],

@@ -980,6 +980,15 @@ async def run_social_news_job(
         log.info("Next social news check at %s (in %ss)", nxt.isoformat(), wait_seconds)
         await asyncio.sleep(wait_seconds)
         try:
+            if bot_settings is not None:
+                chat_id = await bot_settings.effective_social_chat_id(settings)
+                rules = await bot_settings.effective_social_rules()
+            if not str(chat_id or "").strip():
+                log.info("Social news skipped: news slot disabled or no destination")
+                from src.job_status import record_job
+
+                record_job(settings.data_dir, "social_news", ok=False, detail="slot disabled or no chat")
+                continue
             news = await _pick_publishable_news(settings, sources, rules_prompt=rules)
             if news is None:
                 log.info("No publishable social news after soft single-source + multi-source filters")
@@ -1024,6 +1033,9 @@ async def run_social_news_once(
     if bot_settings is not None:
         chat_id = await bot_settings.effective_social_chat_id(settings)
         rules = await bot_settings.effective_social_rules()
+    if not str(chat_id or "").strip():
+        log.info("One-shot social news: news slot disabled or no destination")
+        return False
     news = await _pick_publishable_news(settings, sources, rules_prompt=rules)
     if news is None:
         log.info("One-shot social news: nothing publishable")

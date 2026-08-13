@@ -364,6 +364,7 @@ def setup_admin_settings_router(
         | ak.texts("edit_rules")
         | ak.texts("edit_rules_legacy")
         | ak.texts("edit_slot_kind")
+        | ak.texts("toggle_slot_enabled")
         | ak.texts("edit_panel_url")
         | ak.texts("edit_panel_url_legacy")
         | ak.texts("edit_panel_token")
@@ -718,6 +719,34 @@ def setup_admin_settings_router(
                 uid, {"mode": "slot", "target_key": key, "slot_index": idx}
             )
             await _show_slot(message, bot_settings, key, idx, lang)
+            return
+
+        if action == "toggle_slot_enabled":
+            sess = await bot_settings.get_session(uid)
+            target_key = str(sess.get("target_key") or "")
+            slot_index = sess.get("slot_index")
+            if target_key not in TARGET_KEYS or slot_index is None:
+                await message.answer(
+                    "اول یک اسلات را باز کنید." if lang == "fa" else "Open a slot first.",
+                    reply_markup=ak.messages_hub_keyboard(lang),
+                )
+                return
+            idx = int(slot_index)
+            target = await bot_settings.get_target(target_key)
+            slot = target.slot(idx)
+            new_enabled = not bool(slot.enabled)
+            await bot_settings.update_slot(target_key, idx, enabled=new_enabled)
+            await audit.write(
+                "toggle_slot_enabled",
+                admin_id=uid,
+                detail=f"{target_key}/{idx} -> {new_enabled}",
+                meta={"target": target_key, "slot": idx, "enabled": new_enabled},
+            )
+            state = ("فعال" if new_enabled else "غیرفعال") if lang == "fa" else ("on" if new_enabled else "off")
+            await message.answer(
+                (f"اسلات {idx + 1}: {state}" if lang == "fa" else f"Slot {idx + 1}: {state}"),
+            )
+            await _show_slot(message, bot_settings, target_key, idx, lang)
             return
 
         if action in _EDIT_FIELD_BY_ACTION:
