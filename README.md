@@ -1,5 +1,22 @@
 # Smart Support Bot
 
+<p align="center">
+  <img src="docs/assets/logo.jpg" alt="Black Fox VPN Logo" width="96">
+</p>
+
+<h1 align="center">Smart Support Bot</h1>
+
+</p>
+
+<p align="center">
+  <a href="https://foxnext.net">Website</a> •
+  <a href="https://foxnext.net/downloads/Black-Fox-Config-Builder.apk">Black-Fox-Config-Builder.apk</a> •
+  <a href="https://github.com/balckfoxgroup/blackfox-vpn-installer">Black Fox Vpn Installer</a> •
+  <a href="https://github.com/balckfoxgroup/smart-support-bot">Smart Support Bot</a> •
+  <a href="https://t.me/blackFoxVPNN">Telegram</a>
+</p>
+
+<div dir="rtl">
 [English](#english) · [فارسی](#فارسی)
 
 ربات 🤖Smart Support bot به‌ صورت رایگان و متن‌ باز (Open Source) در اختیار عموم قرار گرفته است تا همه بتوانند آزادانه از آن استفاده کنند و در توسعه و بهبود آن مشارکت داشته باشند.
