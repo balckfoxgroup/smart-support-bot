@@ -1,9 +1,10 @@
-# Smart Support Bot
 
-
-<h1 align="center">Smart Support Bot</h1>
-
+<p align="center">
+  <img src="docs/assets/logo.jpg" alt="Black Fox VPN Logo" width="96">
 </p>
+
+<h1 align="center">smart support bot</h1>
+
 
 <p align="center">
   <a href="https://foxnext.net">Website</a> •
