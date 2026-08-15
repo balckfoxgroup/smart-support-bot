@@ -1,8 +1,5 @@
 # Smart Support Bot
 
-<p align="center">
-  <img src="docs/assets/logo.jpg" alt="Black Fox VPN Logo" width="96">
-</p>
 
 <h1 align="center">Smart Support Bot</h1>
 
@@ -17,7 +14,7 @@
 </p>
 
 <div dir="rtl">
-[English](#english) · [فارسی](#فارسی)
+
 
 ربات 🤖Smart Support bot به‌ صورت رایگان و متن‌ باز (Open Source) در اختیار عموم قرار گرفته است تا همه بتوانند آزادانه از آن استفاده کنند و در توسعه و بهبود آن مشارکت داشته باشند.
 
