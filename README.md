@@ -2,7 +2,7 @@
 
 [English](#english) · [فارسی](#فارسی)
 
-🤖 Smart Support bot به‌صورت رایگان و متن‌باز (Open Source) در اختیار عموم قرار گرفته است تا همه بتوانند آزادانه از آن استفاده کنند و در توسعه و بهبود آن مشارکت داشته باشند.
+ربات 🤖Smart Support bot به‌ صورت رایگان و متن‌ باز (Open Source) در اختیار عموم قرار گرفته است تا همه بتوانند آزادانه از آن استفاده کنند و در توسعه و بهبود آن مشارکت داشته باشند.
 
 ⭐ اگر این پروژه برای شما مفید است، لطفاً با Star ⭐ در GitHub از ادامه این مسیر و توسعه پروژه حمایت کنید. حمایت شما انگیزه‌ای برای ادامه و ساخت پروژه‌های بهتر است.
 
@@ -12,6 +12,8 @@
 🚀 در کنار Smart support Bot، می‌توانید از سایر پروژه‌های Black Fox نیز دیدن کنید و از آن‌ها استفاده کنید.
 
 از همراهی و حمایت شما سپاسگزاریم. 🙏
+
+
 Open-source multilingual **Telegram Smart support bot** from the Black Fox family.  
 Build product catalogs, answer with Ask AI, search knowledge, post news, and reconfigure the bot safely from chat.
 
