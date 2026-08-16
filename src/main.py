@@ -188,7 +188,14 @@ async def run() -> None:
     )
     dp.include_router(setup_safety_router(users, settings=settings))
     dp.include_router(
-        setup_menu_router(users, settings=settings, metrics=metrics, access=access)
+        setup_menu_router(
+            users,
+            settings=settings,
+            metrics=metrics,
+            access=access,
+            bot_settings=bot_settings,
+            control=control,
+        )
     )
     dp.include_router(setup_group_router(settings, users, ai, knowledge, catalog))
     dp.include_router(

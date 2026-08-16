@@ -73,6 +73,7 @@ def setup_chat_router(
             return
 
         try:
+            await users.touch_from_telegram_user(user)
             await _handle_ask_ai_text(message, user)
         except Exception:
             logger.exception("Ask AI handler crashed")
@@ -126,18 +127,25 @@ def setup_chat_router(
             await users.append_chat(user.id, "user", text)
             await users.append_chat(user.id, "assistant", body)
             await metrics.record_answered(referred_support=False, ai_solved=True)
-            await message.answer(body, reply_markup=keyboards.ask_ai_keyboard(lang))
+            await message.answer(
+                body,
+                reply_markup=keyboards.ask_ai_keyboard(
+                    lang, product_id=await users.get_ask_ai_product(user.id)
+                ),
+            )
             return
 
-        ask_kb = keyboards.ask_ai_keyboard(lang)
+        ask_product = await users.get_ask_ai_product(user.id)
+        ask_kb = keyboards.ask_ai_keyboard(lang, product_id=ask_product)
         retrieval = retrieve_catalog_context(
             text,
             lang=lang,
             project_root=settings.project_root,
             limit_features=4,
             limit_media=2,
+            product_id=ask_product,
         )
-        media_paths = list(retrieval.media_paths)
+        media_paths = list(retrieval.media_paths) if retrieval.attach_media else []
 
         # Local memory fast path — survives AI API changes
         mem_hit = memory.lookup(text, lang=lang)
@@ -195,26 +203,39 @@ def setup_chat_router(
             lang,
             faq_refs=faq_refs,
             limit_chars=kb_limit,
-            include_community=wants_contact_links(text),
+            include_community=wants_contact_links(text) and not ask_product,
             max_chunks=8 if retrieval.insufficient else 6,
+            product_id=ask_product,
         )
 
-        catalog_snip = catalog.catalog_snippet(text, lang=lang)
-        products_snip = ai_products_snippet(text, lang=lang)
+        # License/site catalogs are Installer-oriented — only when that product is scoped
+        catalog_snip = ""
+        if not ask_product or ask_product == "vpn-installer":
+            catalog_snip = catalog.catalog_snippet(text, lang=lang)
+        products_snip = ai_products_snippet(
+            text, lang=lang, product_id=ask_product
+        )
         site_snip = ""
         try:
             if (
-                retrieval.insufficient
-                or match.low_confidence
-                or wants_sales_nudge(text, intent_name)
-                or wants_contact_links(text)
+                not ask_product
+                and (
+                    retrieval.insufficient
+                    or match.low_confidence
+                    or wants_sales_nudge(text, intent_name)
+                    or wants_contact_links(text)
+                )
+            ):
+                site_snip = await catalog.site_snippet(text)
+            elif ask_product == "vpn-installer" and (
+                wants_sales_nudge(text, intent_name) or wants_contact_links(text)
             ):
                 site_snip = await catalog.site_snippet(text)
         except Exception:
             logger.exception("site search failed")
 
         intent_block = ""
-        if match.record:
+        if match.record and not ask_product:
             intent_block = join_context_blocks(
                 [
                     f"Matched intent: {match.record.intent} (score={match.score:.2f})",
@@ -223,6 +244,15 @@ def setup_chat_router(
                     f"Full answer: {match.record.full_answer}",
                 ],
                 3500,
+            )
+        elif match.record and ask_product:
+            # Soft intent hint only — do not let other-product intents override scope
+            intent_block = join_context_blocks(
+                [
+                    f"Optional intent hint (may ignore if off-product): {match.record.intent}",
+                    f"Short: {match.record.short_answer}",
+                ],
+                1200,
             )
 
         facts = format_facts_from_meta(knowledge.index.facts or intents.facts)
@@ -253,7 +283,14 @@ def setup_chat_router(
         )
 
         history_section = history_blob or "(none)"
+        product_scope = (
+            f"Product catalog scope: {ask_product}\n"
+            "Answer only within this product. Do not mix other products.\n\n"
+            if ask_product
+            else ""
+        )
         user_prompt = (
+            f"{product_scope}"
             f"Prior turns in this Ask AI session:\n{history_section}\n\n"
             f"User question:\n{text}\n\n"
             f"Expanded topic hints (internal):\n{retrieval.query_expanded}\n\n"

@@ -62,23 +62,19 @@ def welcome_after_lang(lang: Lang) -> str:
     table = {
         "fa": (
             f"سلام! من دستیار {name} هستم.\n"
-            "از منوی زیر موضوع را انتخاب کنید.\n"
-            "برای پرسش آزاد، گزینه «سوال از AI» را بزنید."
+            "از منوی زیر کاتالوگ مورد نظر را انتخاب کنید."
         ),
         "en": (
             f"Hi! I'm the {name} assistant.\n"
-            "Pick a topic from the menu below.\n"
-            "For free-form questions, tap “Ask AI”."
+            "Choose a catalog from the menu below."
         ),
         "ru": (
             f"Здравствуйте! Я помощник {name}.\n"
-            "Выберите тему в меню.\n"
-            "Для свободных вопросов нажмите «Ask AI»."
+            "Выберите нужный каталог в меню ниже."
         ),
         "zh": (
             f"你好！我是 {name} 助手。\n"
-            "请从下方菜单选择主题。\n"
-            "自由提问请点 “Ask AI”。"
+            "请从下方菜单选择所需目录。"
         ),
     }
     return table.get(lang, table["en"])
@@ -182,42 +178,70 @@ MENU_MODE_AI_PRO: dict[Lang, str] = {
 ASK_AI_PROMPT: dict[Lang, str] = {
     "fa": (
         "حالت سوال از AI فعال شد.\n\n"
-        "هر سؤالی درباره Black Fox دارید بپرسید تا راهنمایی‌تان کنم.\n"
-        "برای بازگشت به منوی اصلی، دکمه «بازگشت به منو» زیر کادر تایپ را بزنید."
+        "سؤال‌های مربوط به همین دسته محصولی که انتخاب کرده‌اید پاسخ داده می‌شود.\n"
+        "برای بازگشت، دکمه محصول یا «بازگشت به منو» را بزنید."
     ),
     "en": (
         "Ask AI mode is on.\n\n"
-        "Ask any Black Fox question and I’ll guide you.\n"
-        "To return to the main menu, tap “Back to menu” under the input field."
+        "Questions are answered for the product category you selected.\n"
+        "To leave, tap the product button or “Back to menu”."
     ),
     "ru": (
         "Режим «Спросить AI» включён.\n\n"
-        "Задайте любой вопрос о Black Fox — я подскажу.\n"
-        "Вернуться в меню: кнопка «Назад в меню» под полем ввода."
+        "Ответы даются по выбранной вами категории продукта.\n"
+        "Чтобы выйти, нажмите кнопку продукта или «Назад в меню»."
     ),
     "zh": (
         "已进入「向 AI 提问」模式。\n\n"
-        "请提出任何关于 Black Fox 的问题，我会为你指导。\n"
-        "返回主菜单：点输入框下方的「返回菜单」。"
+        "将针对您所选的产品分类回答问题。\n"
+        "退出请点产品按钮或「返回菜单」。"
     ),
 }
+
+
+def ask_ai_prompt_for_product(lang: Lang, product_title: str) -> str:
+    title = (product_title or "").strip() or "Black Fox"
+    table = {
+        "fa": (
+            f"حالت سوال از AI برای «{title}» فعال شد.\n\n"
+            "سؤال‌های مربوط به همین دسته محصول پاسخ داده می‌شود.\n"
+            "برای بازگشت، دکمه همین محصول یا «بازگشت به منو» را بزنید."
+        ),
+        "en": (
+            f"Ask AI is on for “{title}”.\n\n"
+            "Questions are answered for this product category only.\n"
+            "To leave, tap this product or “Back to menu”."
+        ),
+        "ru": (
+            f"Режим Ask AI для «{title}» включён.\n\n"
+            "Ответы — только по этой категории продукта.\n"
+            "Выход: кнопка продукта или «Назад в меню»."
+        ),
+        "zh": (
+            f"已为「{title}」开启 Ask AI。\n\n"
+            "仅回答该产品分类相关问题。\n"
+            "退出请点该产品或「返回菜单」。"
+        ),
+    }
+    return table.get(lang, table["en"])
+
 
 USE_MENU_OR_ASK_AI: dict[Lang, str] = {
     "fa": (
         "الان حالت سوال از AI فعال نیست.\n"
-        "از منو موضوع را انتخاب کنید، یا گزینه «سوال از AI» را بزنید."
+        "اول یک کاتالوگ محصول را باز کنید، سپس «سوال از AI» را بزنید."
     ),
     "en": (
         "Ask AI mode is not active.\n"
-        "Pick a topic from the menu, or tap “Ask AI”."
+        "Open a product catalog first, then tap “Ask AI”."
     ),
     "ru": (
         "Режим «Спросить AI» не активен.\n"
-        "Выберите тему в меню или нажмите «Спросить AI»."
+        "Сначала откройте каталог продукта, затем нажмите «Спросить AI»."
     ),
     "zh": (
         "尚未进入「向 AI 提问」模式。\n"
-        "请从菜单选择主题，或点「向 AI 提问」。"
+        "请先打开产品目录，再点「向 AI 提问」。"
     ),
 }
 
@@ -321,8 +345,8 @@ def help_text(lang: Lang) -> str:
     table = {
         "fa": (
             f"من {name} هستم — پشتیبانی محصول Black Fox VPN.\n\n"
-            "• از منو موضوع را انتخاب کنید\n"
-            "• برای پرسش آزاد گزینهٔ «سوال از AI» را بزنید\n"
+            "• از منو کاتالوگ محصول را انتخاب کنید\n"
+            "• داخل همان محصول، «سوال از AI» را بزنید (پاسخ‌ها برای همان دسته است)\n"
             "• برای منوی اصلی دستور /menu را بفرستید\n"
             "• برای تغییر زبان دستور /lang را بفرستید\n\n"
             f"وب‌سایت: {SITE_URL}\n"
@@ -330,8 +354,8 @@ def help_text(lang: Lang) -> str:
         ),
         "en": (
             f"I'm {name} — Black Fox VPN product support.\n\n"
-            "• Pick a topic from the menu\n"
-            "• Free-form questions: menu → Ask AI\n"
+            "• Open a product catalog from the menu\n"
+            "• Inside that product, tap Ask AI (answers stay in that category)\n"
             "• /menu — main menu\n"
             "• /lang — change language\n\n"
             f"Website: {SITE_URL}\n"
@@ -339,8 +363,8 @@ def help_text(lang: Lang) -> str:
         ),
         "ru": (
             f"Я {name} — поддержка продукта Black Fox VPN.\n\n"
-            "• Выберите тему в меню\n"
-            "• Свободные вопросы: меню → Спросить AI\n"
+            "• Откройте каталог продукта в меню\n"
+            "• Внутри продукта нажмите «Спросить AI» (ответы по этой категории)\n"
             "• /menu — главное меню\n"
             "• /lang — сменить язык\n\n"
             f"Сайт: {SITE_URL}\n"
@@ -348,8 +372,8 @@ def help_text(lang: Lang) -> str:
         ),
         "zh": (
             f"我是 {name} — Black Fox VPN 产品支持。\n\n"
-            "• 从菜单选择主题\n"
-            "• 自由提问：菜单 → 向 AI 提问\n"
+            "• 从菜单打开产品目录\n"
+            "• 在该产品内点「向 AI 提问」（仅回答该分类）\n"
             "• /menu — 主菜单\n"
             "• /lang — 更改语言\n\n"
             f"网站：{SITE_URL}\n"
@@ -372,10 +396,22 @@ HELP_TEXT: dict[Lang, str] = {
 # ---------------------------------------------------------------------------
 
 MENU_ASK_AI_FOOTER: dict[Lang, str] = {
-    "fa": "در صورت داشتن هر گونه سوال یا نیاز به آموزش، از بخش «سوال از AI» بپرسید.",
-    "en": "For any question or step-by-step guidance, use Ask AI.",
-    "ru": "По вопросам и обучению используйте «Спросить AI».",
-    "zh": "如有问题或需要教程，请使用「向 AI 提问」。",
+    "fa": (
+        "برای پرسش درباره همین دسته محصول، گزینه «سوال از AI» را بزنید؛ "
+        "پاسخ‌ها مربوط به همین کاتالوگ خواهند بود."
+    ),
+    "en": (
+        "To ask about this product category, tap “Ask AI”; "
+        "answers stay scoped to this catalog."
+    ),
+    "ru": (
+        "Чтобы спросить об этой категории продукта, нажмите «Спросить AI»; "
+        "ответы относятся к этому каталогу."
+    ),
+    "zh": (
+        "如需询问本产品分类，请点「向 AI 提问」；"
+        "回答仅针对本目录。"
+    ),
 }
 
 INTRO_ABOUT: dict[Lang, str] = {

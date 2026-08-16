@@ -103,10 +103,8 @@ def main_menu_keyboard(
     can_settings: bool | None = None,
     can_stats: bool | None = None,
 ) -> ReplyKeyboardMarkup:
-    """Ask AI first, then one key per product catalog (no Products wrapper)."""
-    rows: list[list[KeyboardButton]] = [
-        [KeyboardButton(text=_label("ask_ai", lang))],
-    ]
+    """Product catalogs on the main menu (Ask AI lives inside each product hub)."""
+    rows: list[list[KeyboardButton]] = []
     for product in get_product_catalogs():
         rows.append([KeyboardButton(text=product.label(lang))])
     rows.append([KeyboardButton(text=_label("contact", lang))])
@@ -133,8 +131,9 @@ def main_menu_keyboard(
 
 
 def installer_keyboard(lang: Lang) -> ReplyKeyboardMarkup:
-    """VPN Installer hub — topics from the previous main menu (images 2+3)."""
+    """VPN Installer hub — Ask AI first, then topic buttons."""
     rows: list[list[KeyboardButton]] = [
+        [KeyboardButton(text=_label("ask_ai", lang))],
         [KeyboardButton(text=_label("modes", lang))],
         [
             KeyboardButton(text=_label("about", lang)),
@@ -168,9 +167,11 @@ def installer_keyboard(lang: Lang) -> ReplyKeyboardMarkup:
 
 
 def catalog_product_keyboard(lang: Lang, product_id: str) -> ReplyKeyboardMarkup:
-    """Feature buttons from a product catalog + back to main."""
+    """Ask AI first, then feature buttons from a product catalog + back to main."""
     product = get_product(product_id)
-    rows: list[list[KeyboardButton]] = []
+    rows: list[list[KeyboardButton]] = [
+        [KeyboardButton(text=_label("ask_ai", lang))],
+    ]
     if product:
         # Pair features two-per-row when possible
         feats = list(product.features or [])
@@ -219,13 +220,22 @@ def modes_keyboard(lang: Lang) -> ReplyKeyboardMarkup:
     )
 
 
-def ask_ai_keyboard(lang: Lang) -> ReplyKeyboardMarkup:
-    """While in Ask AI mode: keep Ask AI + back to full menu."""
+def ask_ai_keyboard(
+    lang: Lang,
+    *,
+    product_id: str | None = None,
+) -> ReplyKeyboardMarkup:
+    """While in Ask AI mode: Ask AI + optional product hub + back to main."""
+    rows: list[list[KeyboardButton]] = [
+        [KeyboardButton(text=_label("ask_ai", lang))],
+    ]
+    if product_id:
+        product = get_product(product_id)
+        if product:
+            rows.append([KeyboardButton(text=product.label(lang))])
+    rows.append([KeyboardButton(text=_label("home", lang))])
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=_label("ask_ai", lang))],
-            [KeyboardButton(text=_label("home", lang))],
-        ],
+        keyboard=rows,
         resize_keyboard=True,
         one_time_keyboard=False,
         is_persistent=True,

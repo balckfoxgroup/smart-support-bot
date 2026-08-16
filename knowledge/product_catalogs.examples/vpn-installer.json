@@ -342,18 +342,21 @@
         "zh": "Mesh — Topology"
       },
       "summary": {
-        "fa": "Mesh Servers — نمای Topology زنده مرکزی / Tunnel / Exit / Node و وضعیت لینک‌ها.",
-        "en": "Mesh Servers — live Topology of Central / Tunnel / Exit / Node and link status.",
-        "ru": "Mesh Servers — live Topology of Central / Tunnel / Exit / Node and link status.",
-        "zh": "Mesh Servers — live Topology of Central / Tunnel / Exit / Node and link status."
+        "fa": "نمای View Mesh Servers: Topology زنده، Hosts/Up/Issues و Refresh Status / Repair Paths.",
+        "en": "View Mesh Servers: live Topology, Hosts/Up/Issues, Refresh Status / Repair Paths.",
+        "ru": "View Mesh Servers: live Topology, Hosts/Up/Issues, Refresh Status / Repair Paths.",
+        "zh": "View Mesh Servers: live Topology, Hosts/Up/Issues, Refresh Status / Repair Paths."
       },
-      "media_slot": "topology",
+      "media_slot": "mesh-topology-live",
       "howto": {
-        "fa": "Mesh Servers در برنامه Black Fox VPN Installer & Android نقشه زنده سرورهای Central و Tunnel و Exit و Node را با وضعیت رنگی لینک‌ها نشان می‌دهد. پیش‌نیاز: ثبت سرورها و در صورت نیاز Full Deploy یا لینک‌های مستقر. از تب View Mesh Servers وضعیت را ببینید و با Refresh Status تازه کنید. اگر میزبانی ندارید، اول Central / Tunnel / Exit / Node را اضافه کنید.",
-        "en": "Mesh Servers in Black Fox VPN Installer & Android shows a live map of Central, Tunnel, Exit, and Node with colored link status. Prerequisites: registered servers and, when needed, Full Deploy or deployed links. Use View Mesh Servers and Refresh Status. If empty, add Central / Tunnel / Exit / Node first.",
-        "ru": "Mesh Servers in Black Fox VPN Installer & Android shows a live map of Central, Tunnel, Exit, and Node with colored link status. Prerequisites: registered servers and, when needed, Full Deploy or deployed links. Use View Mesh Servers and Refresh Status. If empty, add Central / Tunnel / Exit / Node first.",
-        "zh": "Mesh Servers in Black Fox VPN Installer & Android shows a live map of Central, Tunnel, Exit, and Node with colored link status. Prerequisites: registered servers and, when needed, Full Deploy or deployed links. Use View Mesh Servers and Refresh Status. If empty, add Central / Tunnel / Exit / Node first."
-      }
+        "fa": "در برنامه Black Fox VPN Installer & Android تب View Mesh Servers نقشه زنده Central و Tunnel و Exit و Node را نشان می‌دهد. رنگ مربع وضعیت سرور است و رنگ خط وضعیت لینک. با Refresh Status تازه کنید و با Repair Paths مسیرهای قابل‌دسترس را تعمیر کنید. اگر میزبانی ندارید، اول سرورها را اضافه یا Full Deploy کنید.",
+        "en": "In Black Fox VPN Installer & Android, View Mesh Servers shows a live map of Central, Tunnel, Exit, and Node. Square color is server status; line color is link status. Use Refresh Status and Repair Paths. If empty, add servers or run Full Deploy first.",
+        "ru": "In Black Fox VPN Installer & Android, View Mesh Servers shows a live map of Central, Tunnel, Exit, and Node. Square color is server status; line color is link status. Use Refresh Status and Repair Paths. If empty, add servers or run Full Deploy first.",
+        "zh": "In Black Fox VPN Installer & Android, View Mesh Servers shows a live map of Central, Tunnel, Exit, and Node. Square color is server status; line color is link status. Use Refresh Status and Repair Paths. If empty, add servers or run Full Deploy first."
+      },
+      "related_media_slots": [
+        "mesh-links"
+      ]
     },
     {
       "id": "mesh_servers",
@@ -385,10 +388,20 @@
         "zh": "Link Test"
       },
       "summary": {
-        "fa": "سنجش اتصال و پیشنهاد نوع لینک (WireGuard / GRE / Reverse Tunnel Stealth-WSS).",
-        "en": "Measure links and recommend WireGuard, GRE, or Reverse Tunnel Stealth-WSS.",
-        "ru": "Measure links and recommend WireGuard, GRE, or Reverse Tunnel Stealth-WSS.",
-        "zh": "Measure links and recommend WireGuard, GRE, or Reverse Tunnel Stealth-WSS."
+        "fa": "لیست Mesh Links، Active Link Monitor و Change Link Type بین دو سرور متصل.",
+        "en": "Mesh Links list, Active Link Monitor, and Change Link Type between two linked servers.",
+        "ru": "Mesh Links list, Active Link Monitor, and Change Link Type between two linked servers.",
+        "zh": "Mesh Links list, Active Link Monitor, and Change Link Type between two linked servers."
+      },
+      "media_slot": "mesh-links",
+      "related_media_slots": [
+        "mesh-topology-live"
+      ],
+      "howto": {
+        "fa": "در همان صفحه View Mesh Servers بخش Mesh Links وضعیت Up/Down هر اتصال را نشان می‌دهد. دو سرور متصل را انتخاب کنید، نوع لینک مثل WireGuard یا GRE یا Reverse Tunnel Stealth-WSS را بزنید، سپس Change Link Type. Connect To عوض نمی‌شود. Active Link Monitor ایجنت‌های درحال اجرا را نشان می‌دهد.",
+        "en": "On View Mesh Servers, Mesh Links shows Up/Down for each connection. Select exactly two linked servers, pick a type such as WireGuard, GRE, or Reverse Tunnel Stealth-WSS, then Change Link Type. Connect To is not changed. Active Link Monitor lists running agents.",
+        "ru": "On View Mesh Servers, Mesh Links shows Up/Down for each connection. Select exactly two linked servers, pick a type such as WireGuard, GRE, or Reverse Tunnel Stealth-WSS, then Change Link Type. Connect To is not changed. Active Link Monitor lists running agents.",
+        "zh": "On View Mesh Servers, Mesh Links shows Up/Down for each connection. Select exactly two linked servers, pick a type such as WireGuard, GRE, or Reverse Tunnel Stealth-WSS, then Change Link Type. Connect To is not changed. Active Link Monitor lists running agents."
       }
     },
     {
@@ -718,13 +731,6 @@
     },
     {
       "role": "screenshot",
-      "slot": "topology-view",
-      "path": "media/catalogs/vpn-installer/04-view-mode-topology.png",
-      "local_folder": "media/catalogs/vpn-installer",
-      "note": "View mode + Topology"
-    },
-    {
-      "role": "screenshot",
       "slot": "factory-reset",
       "path": "media/catalogs/vpn-installer/05-settings-factory-reset.png",
       "local_folder": "media/catalogs/vpn-installer",
@@ -935,14 +941,78 @@
       "slot": "mesh-topology-live",
       "path": "media/catalogs/vpn-installer/28-mesh-topology-live.png",
       "local_folder": "media/catalogs/vpn-installer",
-      "note": "Mesh live topology"
+      "note": "View Mesh Servers live topology (20260817)",
+      "id": "mesh-topology-live",
+      "topics": [
+        "mesh",
+        "topology",
+        "view mesh servers",
+        "refresh status",
+        "repair paths",
+        "hosts",
+        "up",
+        "issues",
+        "central",
+        "tunnel",
+        "exit",
+        "node"
+      ],
+      "feature_ids": [
+        "mesh_topology",
+        "diagnose_repair"
+      ],
+      "stage": "ops",
+      "title": {
+        "fa": "نقشه Topology در View Mesh Servers",
+        "en": "Topology map in View Mesh Servers",
+        "ru": "Topology map in View Mesh Servers",
+        "zh": "Topology map in View Mesh Servers"
+      },
+      "description": {
+        "fa": "اسکرین زنده Topology با کارت‌های Hosts/Up/Issues و دکمه‌های Refresh Status و Repair Paths.",
+        "en": "Live Topology with Hosts/Up/Issues cards and Refresh Status / Repair Paths buttons.",
+        "ru": "Live Topology with Hosts/Up/Issues cards and Refresh Status / Repair Paths buttons.",
+        "zh": "Live Topology with Hosts/Up/Issues cards and Refresh Status / Repair Paths buttons."
+      }
     },
     {
       "role": "screenshot",
       "slot": "mesh-links",
       "path": "media/catalogs/vpn-installer/29-mesh-links-view.png",
       "local_folder": "media/catalogs/vpn-installer",
-      "note": "Mesh links + link type"
+      "note": "Mesh Links + Change Link Type (20260817)",
+      "id": "mesh-links",
+      "topics": [
+        "mesh",
+        "mesh links",
+        "link type",
+        "change link type",
+        "wireguard",
+        "gre",
+        "reverse tunnel",
+        "stealth-wss",
+        "link monitor",
+        "active link monitor",
+        "select two servers"
+      ],
+      "feature_ids": [
+        "link_test",
+        "mesh_topology",
+        "mesh_servers"
+      ],
+      "stage": "ops",
+      "title": {
+        "fa": "Mesh Links و Change Link Type",
+        "en": "Mesh Links and Change Link Type",
+        "ru": "Mesh Links and Change Link Type",
+        "zh": "Mesh Links and Change Link Type"
+      },
+      "description": {
+        "fa": "لیست لینک‌ها، Active Link Monitor، انتخاب دو سرور و دکمه Change Link Type.",
+        "en": "Link list, Active Link Monitor, select two servers, and Change Link Type.",
+        "ru": "Link list, Active Link Monitor, select two servers, and Change Link Type.",
+        "zh": "Link list, Active Link Monitor, select two servers, and Change Link Type."
+      }
     },
     {
       "role": "screenshot",
@@ -1008,5 +1078,5 @@
       "note": "Delete Tunnel Servers"
     }
   ],
-  "updated_at": "2026-08-16"
+  "updated_at": "2026-08-17"
 }

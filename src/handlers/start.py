@@ -85,10 +85,6 @@ async def send_main_menu(
 ) -> None:
     if users is not None and user_id:
         await users.set_ask_ai(user_id, False)
-    body = (
-        f"{texts.t(texts.MAIN_MENU_TITLE, lang)}\n"
-        f"{texts.t(texts.MAIN_MENU_HINT, lang)}"
-    )
     can_settings = False
     can_stats = False
     if access is not None and user_id:
@@ -97,8 +93,9 @@ async def send_main_menu(
     elif settings and user_id and is_bot_admin(settings, user_id):
         can_settings = True
         can_stats = True
+    # No separate "Main menu / choose option" filler — welcome/catalog text is enough.
     await message.answer(
-        body,
+        texts.welcome_after_lang(lang),
         reply_markup=keyboards.main_menu_keyboard(
             lang,
             is_admin=can_settings or can_stats,
@@ -117,14 +114,24 @@ async def send_welcome_flow(
     settings: Settings | None = None,
     access: AdminAccess | None = None,
 ) -> None:
-    await message.answer(texts.welcome_after_lang(lang))
-    await send_main_menu(
-        message,
-        lang,
-        users=users,
-        user_id=user_id,
-        settings=settings,
-        access=access,
+    if users is not None and user_id:
+        await users.set_ask_ai(user_id, False)
+    can_settings = False
+    can_stats = False
+    if access is not None and user_id:
+        can_settings = await access.can_settings(user_id)
+        can_stats = await access.can_stats(user_id)
+    elif settings and user_id and is_bot_admin(settings, user_id):
+        can_settings = True
+        can_stats = True
+    await message.answer(
+        texts.welcome_after_lang(lang),
+        reply_markup=keyboards.main_menu_keyboard(
+            lang,
+            is_admin=can_settings or can_stats,
+            can_settings=can_settings,
+            can_stats=can_stats,
+        ),
     )
 
 
@@ -185,6 +192,7 @@ def setup_start_router(
         if not code or not message.from_user:
             return
         uid = message.from_user.id
+        await users.touch_from_telegram_user(message.from_user)
         lang, is_new = await users.set_lang(uid, code)
         if is_new:
             await metrics.record_new_user()

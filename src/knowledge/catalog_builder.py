@@ -36,7 +36,9 @@ def _load_build_prompt(inbox: Path) -> str:
         return path.read_text(encoding="utf-8")
     return (
         "Build a product catalog JSON. Output ONLY valid JSON with schema_version 1, "
-        "product_id, title/short_summary/long_summary/features in fa/en/ru/zh."
+        "product_id, title/short_summary/long_summary/features in fa/en/ru/zh. "
+        "Each feature should include id, title, summary, optional howto, optional media_slot. "
+        "Media metadata will be attached separately; focus on accurate feature meanings."
     )
 
 
@@ -259,26 +261,39 @@ async def build_one_catalog(
 
     media_paths = copy_media_to_server(folder, project_root=project_root, product_id=product_id)
     if media_paths:
-        data["media"] = [
-            {
-                "role": "screenshot" if i else "hero",
-                "slot": f"{product_id}-{i}",
-                "path": p,
-                "local_folder": f"media/catalogs/{product_id}",
-                "note": "copied from catalog inbox",
-            }
-            for i, p in enumerate(media_paths)
+        from src.knowledge.catalog_rag import enrich_media_entry_from_filename
+
+        feature_ids = [
+            str(f.get("id") or "").strip()
+            for f in (data.get("features") or [])
+            if isinstance(f, dict) and str(f.get("id") or "").strip()
         ]
+        data["media"] = []
+        for i, p in enumerate(media_paths):
+            entry = enrich_media_entry_from_filename(
+                Path(p).name, product_id=product_id, index=i
+            )
+            entry["path"] = p
+            # Soft-link feature ids that appear in the filename
+            name_l = Path(p).stem.lower().replace("-", "_")
+            linked = [fid for fid in feature_ids if fid.replace("-", "_") in name_l]
+            if linked:
+                entry["feature_ids"] = linked[:4]
+            data["media"].append(entry)
     else:
         data.setdefault(
             "media",
             [
                 {
+                    "id": f"{product_id}-hero",
                     "role": "hero",
                     "slot": f"{product_id}-hero",
                     "path": "",
                     "local_folder": f"media/catalogs/{product_id}",
                     "note": "no photos in folder",
+                    "topics": [],
+                    "feature_ids": [],
+                    "stage": "other",
                 }
             ],
         )

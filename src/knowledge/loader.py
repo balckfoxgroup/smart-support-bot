@@ -28,10 +28,39 @@ class KnowledgeIndex:
     """In-memory compact knowledge for RAG-style prompts."""
 
     facts: dict[str, Any] = field(default_factory=dict)
-    faq_chunks: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
-    # lang -> list of (title, body)
+    # lang -> list of (title, body, product_id|None)
+    faq_chunks: dict[str, list[tuple[str, str, str | None]]] = field(default_factory=dict)
     decision_summaries: list[str] = field(default_factory=list)
     loaded_files: int = 0
+
+
+_PRODUCT_GUIDE_ALIASES: dict[str, str] = {
+    "smart-support-bot": "agent-bot",
+    "smart-support": "agent-bot",
+    "telegram-agent-bot": "agent-bot",
+    "telegram-agent": "agent-bot",
+}
+
+
+def product_id_from_guide_stem(stem: str) -> str | None:
+    """Map product_guides/<product>-*.md stem to catalog product_id."""
+    base = re.sub(r"[._-](fa|en|ru|zh)$", "", (stem or "").lower(), flags=re.I)
+    base = base.strip("-_.")
+    if not base or base == "readme":
+        return None
+    for alias, pid in _PRODUCT_GUIDE_ALIASES.items():
+        if base == alias or base.startswith(alias + "-") or base.startswith(alias + "_"):
+            return pid
+    known = ("vpn-installer", "config-builder", "agent-bot")
+    for pid in known:
+        if base == pid or base.startswith(pid + "-") or base.startswith(pid + "_"):
+            return pid
+    # vpn_installer style
+    dashed = base.replace("_", "-")
+    for pid in known:
+        if dashed == pid or dashed.startswith(pid + "-"):
+            return pid
+    return None
 
 
 def tokenize(text: str) -> set[str]:
@@ -109,7 +138,7 @@ class KnowledgeLoader:
                 chunk = "\n".join(str(x) for x in lines if x)
                 if chunk:
                     self.index.faq_chunks.setdefault(str(lang), []).append(
-                        ("community", chunk)
+                        ("community", chunk, None)
                     )
         self.index.loaded_files += 1
 
@@ -122,7 +151,7 @@ class KnowledgeLoader:
             lang_dir = root / folder
             if not lang_dir.is_dir():
                 continue
-            chunks: list[tuple[str, str]] = []
+            chunks: list[tuple[str, str, str | None]] = []
             for path in sorted(lang_dir.glob("*.md")):
                 try:
                     text = path.read_text(encoding="utf-8", errors="replace")
@@ -132,7 +161,7 @@ class KnowledgeLoader:
                 self.index.loaded_files += 1
                 for title, body in _split_markdown_sections(text, path.stem):
                     if body.strip():
-                        chunks.append((title, body.strip()))
+                        chunks.append((title, body.strip(), None))
             self.index.faq_chunks[lang] = chunks
 
     def _load_product_guides(self) -> None:
@@ -159,11 +188,12 @@ class KnowledgeLoader:
                 lang = "zh"
             # Also strip language suffix from title stem for cleaner headings
             title_stem = re.sub(r"[._-](fa|en|ru|zh)$", "", path.stem, flags=re.I)
+            product_id = product_id_from_guide_stem(title_stem)
             self.index.loaded_files += 1
             for title, body in _split_markdown_sections(text, title_stem):
                 if not body.strip():
                     continue
-                chunk = (f"product-guide:{title}", body.strip())
+                chunk = (f"product-guide:{title}", body.strip(), product_id)
                 self.index.faq_chunks.setdefault(lang, []).append(chunk)
                 # Cross-index FA/EN guides lightly into the other language for fallback
                 if lang == "fa":
@@ -196,23 +226,48 @@ class KnowledgeLoader:
         limit_chars: int | None = None,
         max_chunks: int = 6,
         include_community: bool = False,
+        product_id: str | None = None,
     ) -> str:
-        """Score FAQ/KB chunks against query; prefer faq_refs when provided."""
+        """Score FAQ/KB chunks against query; prefer faq_refs when provided.
+
+        When product_id is set, only that product's guide chunks are used
+        (shared multilingual FAQ / other products are excluded).
+        """
         limit = limit_chars or self.settings.knowledge_snippet_chars
         q_tokens = tokenize(query)
-        chunks = list(self.index.faq_chunks.get(lang) or [])
-        # Fallback: also search English KB if sparse
-        if lang != "en" and self.index.faq_chunks.get("en"):
-            chunks.extend(self.index.faq_chunks["en"])
+        scope = (product_id or "").strip() or None
+        raw_chunks = list(self.index.faq_chunks.get(lang) or [])
+        # Fallback: also search English KB if sparse (only when not product-scoped)
+        if not scope and lang != "en" and self.index.faq_chunks.get("en"):
+            raw_chunks.extend(self.index.faq_chunks["en"])
+        elif scope and lang != "en" and self.index.faq_chunks.get("en"):
+            # Still allow EN product guides for the same product_id
+            raw_chunks.extend(self.index.faq_chunks["en"])
 
         scored: list[tuple[float, str, str]] = []
         refs = {r.upper() for r in (faq_refs or [])}
-        for title, body in chunks:
+        for item in raw_chunks:
+            if len(item) >= 3:
+                title, body, chunk_pid = item[0], item[1], item[2]
+            else:
+                title, body, chunk_pid = item[0], item[1], None
             if not include_community and title.lower() == "community":
                 continue
+            if scope:
+                # Strict isolation: only product-guide chunks for this product
+                if not str(title).startswith("product-guide:"):
+                    continue
+                if (chunk_pid or "") != scope:
+                    continue
+            else:
+                # Unscoped Ask AI should not leak another product's private guides heavily;
+                # still allow guides but prefer general FAQ.
+                pass
             score = _overlap_score(q_tokens, tokenize(title + " " + body))
             if refs and any(r in title.upper() or r in body.upper() for r in refs):
                 score += 0.45
+            if scope and str(title).startswith("product-guide:"):
+                score += 0.2
             if score > 0:
                 scored.append((score, title, body))
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -223,7 +278,8 @@ class KnowledgeLoader:
             blocks.append(f"### {title}\n{snippet}")
 
         # Light decision-tree hints when query looks like troubleshooting
-        if any(
+        # (skip when product-scoped — trees are shared/installer-oriented)
+        if not scope and any(
             w in query.lower()
             for w in ("error", "fail", "timeout", "ssh", "ошиб", "خطا", "失败", "не работ")
         ):

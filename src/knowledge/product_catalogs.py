@@ -330,11 +330,44 @@ def resolve_media_paths_for_query(
     return [p for _, p in scored[: max(1, limit)]]
 
 
-def ai_products_snippet(query: str, *, lang: str = "en", limit_chars: int = 4500) -> str:
-    """Build a prompt block from product catalogs matching the query (or all if product ask)."""
+def ai_products_snippet(
+    query: str,
+    *,
+    lang: str = "en",
+    limit_chars: int = 4500,
+    product_id: str | None = None,
+) -> str:
+    """Build a prompt block from product catalogs matching the query (or one product)."""
     catalogs = get_product_catalogs()
     if not catalogs:
         return ""
+    scope = (product_id or "").strip()
+    if scope:
+        cat = next((c for c in catalogs if c.product_id == scope), None)
+        if not cat:
+            return f"Product catalog scope={scope}: no catalog loaded."
+        body = cat.menu_body(lang)
+        # Include feature howto/summary for richer product-only answers
+        feat_lines: list[str] = []
+        for feat in cat.features or []:
+            if not isinstance(feat, dict):
+                continue
+            fid = str(feat.get("id") or "").strip()
+            title = (feat.get("title") or {}).get(lang) or (feat.get("title") or {}).get("en") or fid
+            summary = (feat.get("summary") or {}).get(lang) or (feat.get("summary") or {}).get("en") or ""
+            howto = (feat.get("howto") or {}).get(lang) or (feat.get("howto") or {}).get("en") or ""
+            block = f"- {title}: {summary}".strip()
+            if howto:
+                block += f"\n  howto: {howto}"
+            feat_lines.append(block)
+        parts = [
+            f"Official product catalog (scoped to {scope} only):",
+            f"### {cat.product_id}\n{body}",
+        ]
+        if feat_lines:
+            parts.append("Features:\n" + "\n".join(feat_lines))
+        return "\n\n".join(parts)[:limit_chars]
+
     q = (query or "").lower()
     product_ask = any(
         w in q

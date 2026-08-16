@@ -75,6 +75,65 @@ EDU_HINTS = (
     "steps",
 )
 
+# Questions that are usually text-only (no UI screenshot needed).
+_NO_MEDIA_HINTS = (
+    "دانلود",
+    "download",
+    "از کجا",
+    "where can i",
+    "where do i get",
+    "قیمت",
+    "price",
+    "خرید",
+    "buy",
+    "سایت",
+    "website",
+    "foxnext",
+    "پشتیبانی",
+    "support",
+    "تماس",
+    "contact",
+    "کانال",
+    "channel",
+    "گروه",
+    "group",
+)
+
+
+def wants_catalog_media(query: str) -> bool:
+    """True when the question likely benefits from a product UI screenshot."""
+    q = _norm(query)
+    if not q:
+        return False
+    if any(h in q for h in _NO_MEDIA_HINTS):
+        return False
+    ui_hints = (
+        "پیکربندی",
+        "configure",
+        "full deploy",
+        "دیپلوی",
+        "ssh",
+        "دامنه",
+        "free domain",
+        "mesh",
+        "inbound",
+        "outbound",
+        "پنل",
+        "panel",
+        "اسکرین",
+        "screenshot",
+        "تصویر",
+        "عکس",
+        "نشان بده",
+        "show me",
+        "howto",
+        "مراحل",
+        "چطور",
+        "چگونه",
+        "آموزش",
+    )
+    return any(h in q for h in ui_hints) or is_educational_question(query)
+
 
 @dataclass(slots=True)
 class CatalogUnit:
@@ -100,6 +159,7 @@ class CatalogRetrieval:
     is_educational: bool
     insufficient: bool
     prompt_block: str
+    attach_media: bool = False
 
 
 def _norm(text: str) -> str:
@@ -314,11 +374,15 @@ def retrieve_catalog_context(
     limit_features: int = 4,
     limit_media: int = 2,
     min_score: float = 4.5,
+    product_id: str | None = None,
 ) -> CatalogRetrieval:
     """Retrieve related catalog sections + only relevant images for a user question."""
     expanded = expand_query(query)
     educational = is_educational_question(query)
     units = build_catalog_units(lang=lang)
+    pid_filter = (product_id or "").strip()
+    if pid_filter:
+        units = [u for u in units if u.product_id == pid_filter]
     scored: list[CatalogUnit] = []
     for u in units:
         s = score_unit(expanded, u)
@@ -408,14 +472,30 @@ def retrieve_catalog_context(
     # Deduplicate existing files only
     media_paths = [p for p in media_paths if p.is_file()]
 
+    # Only attach screenshots when question is UI/howto-related AND media is strongly linked
+    top_media_score = media_scored[0][0] if media_scored else 0.0
+    attach_media = bool(
+        media_paths
+        and wants_catalog_media(query)
+        and (top_media_score >= 12.0 or (educational and top_media_score >= 10.0))
+    )
+    if not attach_media:
+        media_paths = []
+
     insufficient = not evidence
     prompt_block = _format_prompt_block(
         evidence=evidence,
-        media_units=[m for _, m in media_scored[:limit_media]],
+        media_units=[m for _, m in media_scored[:limit_media]] if attach_media else [],
         educational=educational,
         insufficient=insufficient,
         lang=lang,
     )
+    if pid_filter:
+        prompt_block = (
+            f"### Product scope\nAnswer only about product_id={pid_filter}. "
+            "Do not mix other product catalogs.\n\n"
+            + prompt_block
+        )
     return CatalogRetrieval(
         query_expanded=expanded,
         units=evidence,
@@ -423,6 +503,7 @@ def retrieve_catalog_context(
         is_educational=educational,
         insufficient=insufficient,
         prompt_block=prompt_block,
+        attach_media=attach_media,
     )
 
 

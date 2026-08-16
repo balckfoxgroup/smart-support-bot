@@ -15,9 +15,10 @@ from src.knowledge.product_catalogs import (
     parse_feature_action,
     parse_product_action,
 )
+from src.knowledge.catalog_rag import retrieve_catalog_context
 from src.storage.metrics import MetricsStore
 from src.storage.users import UserStore
-from src.ui import keyboards, texts
+from src.ui import keyboards, messaging, texts
 
 router = Router(name="menu")
 
@@ -66,6 +67,8 @@ def setup_menu_router(
     settings: Settings,
     metrics: MetricsStore,
     access: AdminAccess | None = None,
+    bot_settings=None,
+    control=None,
 ) -> Router:
     @router.message(F.chat.type == "private", IsMenuButton())
     async def on_menu_button(message: Message) -> None:
@@ -74,6 +77,7 @@ def setup_menu_router(
             return
 
         uid = user.id
+        await users.touch_from_telegram_user(user)
         if not await users.has_lang(uid):
             await send_language_picker(message, users)
             return
@@ -81,7 +85,10 @@ def setup_menu_router(
         lang = await users.get_lang(uid, user.language_code)
         action = keyboards.resolve_menu_action(message.text, lang)
         if not action:
-            return
+            # Not a resolvable menu label — let other routers (Ask AI / admin) handle it.
+            from aiogram.dispatcher.event.bases import SkipHandler
+
+            raise SkipHandler()
 
         if action == "lang":
             await users.set_ask_ai(uid, False)
@@ -89,6 +96,7 @@ def setup_menu_router(
             return
 
         if action == "home":
+            await users.set_current_product(uid, None)
             await send_main_menu(
                 message,
                 lang,
@@ -111,13 +119,36 @@ def setup_menu_router(
 
         # bot_stats / settings are handled by admin routers.
         if action in {"bot_stats", "settings"}:
-            return
+            from aiogram.dispatcher.event.bases import SkipHandler
+
+            raise SkipHandler()
 
         if action == "ask_ai":
-            await users.set_ask_ai(uid, True)
+            product_id = (
+                await users.get_current_product(uid)
+                or await users.get_ask_ai_product(uid)
+            )
+            if not product_id:
+                await users.set_ask_ai(uid, False)
+                await message.answer(
+                    texts.t(texts.USE_MENU_OR_ASK_AI, lang),
+                    reply_markup=await _menu_kb(),
+                )
+                return
+            await users.set_ask_ai(uid, True, product_id=product_id)
+            # Leave admin wizards so free-text Ask AI is never swallowed.
+            try:
+                if bot_settings is not None:
+                    await bot_settings.clear_session(uid)
+                if control is not None:
+                    await control.registry.clear_session(uid)
+            except Exception:  # noqa: BLE001
+                pass
+            product = get_product(product_id)
+            title = product.label(lang) if product else product_id
             await message.answer(
-                texts.t(texts.ASK_AI_PROMPT, lang),
-                reply_markup=keyboards.ask_ai_keyboard(lang),
+                texts.ask_ai_prompt_for_product(lang, title),
+                reply_markup=keyboards.ask_ai_keyboard(lang, product_id=product_id),
             )
             return
 
@@ -127,6 +158,7 @@ def setup_menu_router(
             from src.branding import load_creator_contact
 
             creator = load_creator_contact(settings.knowledge_root)
+            await users.set_current_product(uid, None)
             await message.answer(
                 creator.format_card(lang),
                 reply_markup=await _menu_kb(),
@@ -136,6 +168,7 @@ def setup_menu_router(
         # Product hubs
         product_id = parse_product_action(action)
         if product_id:
+            await users.set_current_product(uid, product_id)
             product = get_product(product_id)
             body = _with_ai_footer(
                 product.menu_body(lang) if product else texts.t(texts.MAIN_MENU_HINT, lang),
@@ -162,8 +195,24 @@ def setup_menu_router(
                 )
                 if feature:
                     body = _with_ai_footer(feature_body(product, feature, lang), lang)
-                    await message.answer(
+                    # Attach related teaching screenshots when catalog has them.
+                    q = str(
+                        (feature.get("title") or {}).get(lang)
+                        or (feature.get("title") or {}).get("en")
+                        or feature.get("id")
+                        or ""
+                    )
+                    media = retrieve_catalog_context(
+                        q,
+                        lang=lang,
+                        project_root=settings.project_root,
+                        limit_features=1,
+                        limit_media=2,
+                    ).media_paths
+                    await messaging.answer_with_media(
+                        message,
                         body,
+                        images=media,
                         reply_markup=keyboards.catalog_product_keyboard(lang, pid),
                     )
                     return
