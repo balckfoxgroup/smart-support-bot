@@ -186,6 +186,9 @@ def feature_label(product: ProductCatalog, feature: dict[str, Any], lang: str) -
 def feature_body(product: ProductCatalog, feature: dict[str, Any], lang: str) -> str:
     """Short educational reply for a product feature key (1–2 lines)."""
     title = feature_label(product, feature, lang)
+    howto = (feature.get("howto") or {}).get(lang) or (feature.get("howto") or {}).get("en") or ""
+    if str(howto).strip():
+        return str(howto).strip()
     summary = (feature.get("summary") or {}).get(lang) or (feature.get("summary") or {}).get("en") or ""
     summary = str(summary).strip()
     if lang == "fa":
@@ -197,6 +200,134 @@ def feature_body(product: ProductCatalog, feature: dict[str, Any], lang: str) ->
     if summary:
         lines.append(summary)
     return "\n".join(lines).strip()
+
+
+def _normalize_query(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip().lower().replace("‌", ""))
+
+
+def match_feature_for_query(
+    query: str, *, lang: str = "fa"
+) -> tuple[ProductCatalog, dict[str, Any], float] | None:
+    """Best matching catalog feature for an Ask AI question."""
+    catalogs = get_product_catalogs()
+    if not catalogs:
+        return None
+    q = _normalize_query(query)
+    if len(q) < 3:
+        return None
+    tokens = [t for t in re.findall(r"[\w\u0600-\u06ff]+", q) if len(t) >= 3]
+    best: tuple[ProductCatalog, dict[str, Any], float] | None = None
+    for cat in catalogs:
+        for feat in cat.features or []:
+            if not isinstance(feat, dict):
+                continue
+            fid = str(feat.get("id") or "").strip().lower().replace("_", " ").replace("-", " ")
+            titles = " ".join(str(v) for v in (feat.get("title") or {}).values()).lower()
+            howto = " ".join(str(v) for v in (feat.get("howto") or {}).values()).lower()
+            summary = " ".join(str(v) for v in (feat.get("summary") or {}).values()).lower()
+            blob = f"{fid} {titles} {howto} {summary} {cat.product_id}"
+            score = 0.0
+            # Strong exact-ish hits for Full Deploy / Connect SSH style asks
+            compact_fid = fid.replace(" ", "")
+            compact_q = q.replace(" ", "").replace("-", "").replace("_", "")
+            if compact_fid and compact_fid in compact_q:
+                score += 12.0
+            if fid and fid in q:
+                score += 8.0
+            for token in tokens:
+                if token in blob:
+                    score += 1.5
+                if token in fid.replace(" ", ""):
+                    score += 2.0
+            # Persian teaching verbs boost when feature already matched a bit
+            if score >= 4 and any(w in q for w in ("آموزش", "اموزش", "چطور", "چگونه", "استفاده", "how", "tutorial")):
+                score += 3.0
+            if best is None or score > best[2]:
+                best = (cat, feat, score)
+    if best is None or best[2] < 6.0:
+        return None
+    return best
+
+
+def feature_howto_text(feature: dict[str, Any], lang: str) -> str:
+    howto = (feature.get("howto") or {}).get(lang) or (feature.get("howto") or {}).get("en") or ""
+    if str(howto).strip():
+        return str(howto).strip()
+    summary = (feature.get("summary") or {}).get(lang) or (feature.get("summary") or {}).get("en") or ""
+    title = (feature.get("title") or {}).get(lang) or (feature.get("title") or {}).get("en") or ""
+    parts = [str(title).strip(), str(summary).strip()]
+    return "\n".join(p for p in parts if p).strip()
+
+
+def resolve_media_paths_for_query(
+    query: str,
+    *,
+    project_root: Path,
+    lang: str = "fa",
+    limit: int = 2,
+    feature: dict[str, Any] | None = None,
+    product: ProductCatalog | None = None,
+) -> list[Path]:
+    """Pick relevant catalog screenshots for the question (most relevant first)."""
+    catalogs = [product] if product is not None else get_product_catalogs()
+    if not catalogs:
+        return []
+    q = _normalize_query(query)
+    tokens = [t for t in re.findall(r"[\w\u0600-\u06ff]+", q) if len(t) >= 3]
+    wanted_slots: list[str] = []
+    if feature:
+        slot = str(feature.get("media_slot") or "").strip()
+        if slot:
+            wanted_slots.append(slot)
+        related = feature.get("related_media_slots")
+        if isinstance(related, list):
+            for item in related:
+                s = str(item or "").strip()
+                if s and s not in wanted_slots:
+                    wanted_slots.append(s)
+
+    scored: list[tuple[float, Path]] = []
+    seen: set[str] = set()
+    for cat in catalogs:
+        if cat is None:
+            continue
+        for media in cat.media or []:
+            if not isinstance(media, dict):
+                continue
+            rel = str(media.get("path") or "").strip().replace("\\", "/")
+            if not rel or rel in seen:
+                continue
+            slot = str(media.get("slot") or "").strip().lower()
+            note = str(media.get("note") or "").lower()
+            blob = f"{slot} {note} {rel} {cat.product_id}".lower()
+            score = 0.0
+            if slot and slot in wanted_slots:
+                # Prefer listed related slots in order
+                score += 20.0 - wanted_slots.index(slot) * 0.5
+            for token in tokens:
+                if token in blob.replace("-", " ").replace("_", " "):
+                    score += 1.2
+                compact = token.replace("-", "").replace("_", "")
+                if compact and compact in slot.replace("-", "").replace("_", ""):
+                    score += 3.0
+            if "fulldeploy" in q.replace(" ", "").replace("-", "").replace("_", ""):
+                if "full-deploy" in slot or "full_deploy" in slot or "fulldeploy" in rel.replace("-", ""):
+                    score += 8.0
+                if slot == "panel-login":
+                    score += 3.0
+                if "operations" in slot:
+                    score += 2.0
+            if score <= 0:
+                continue
+            path = (project_root / rel).resolve()
+            if not path.is_file():
+                continue
+            seen.add(rel)
+            scored.append((score, path))
+
+    scored.sort(key=lambda x: (-x[0], str(x[1])))
+    return [p for _, p in scored[: max(1, limit)]]
 
 
 def ai_products_snippet(query: str, *, lang: str = "en", limit_chars: int = 4500) -> str:

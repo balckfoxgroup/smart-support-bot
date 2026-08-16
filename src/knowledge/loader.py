@@ -47,6 +47,7 @@ class KnowledgeLoader:
         self.index = KnowledgeIndex()
         self._load_facts()
         self._load_faq_markdown()
+        self._load_product_guides()
         self._load_decision_trees()
         logger.info(
             "Knowledge loaded: files=%s faq_langs=%s trees=%s",
@@ -133,6 +134,42 @@ class KnowledgeLoader:
                     if body.strip():
                         chunks.append((title, body.strip()))
             self.index.faq_chunks[lang] = chunks
+
+    def _load_product_guides(self) -> None:
+        """Load API-independent product structure markdown under knowledge/product_guides."""
+        root = self.settings.knowledge_root / "product_guides"
+        if not root.is_dir():
+            return
+        for path in sorted(root.glob("*.md")):
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                logger.warning("Cannot read product guide %s: %s", path, exc)
+                continue
+            name = path.stem.lower()
+            # vpn-installer-structure.fa.md → lang fa; *.en.md → en; else all langs
+            lang = "en"
+            if name.endswith(".fa") or name.endswith("_fa") or name.endswith("-fa"):
+                lang = "fa"
+            elif name.endswith(".en") or name.endswith("_en") or name.endswith("-en"):
+                lang = "en"
+            elif name.endswith(".ru") or name.endswith("_ru") or name.endswith("-ru"):
+                lang = "ru"
+            elif name.endswith(".zh") or name.endswith("_zh") or name.endswith("-zh"):
+                lang = "zh"
+            # Also strip language suffix from title stem for cleaner headings
+            title_stem = re.sub(r"[._-](fa|en|ru|zh)$", "", path.stem, flags=re.I)
+            self.index.loaded_files += 1
+            for title, body in _split_markdown_sections(text, title_stem):
+                if not body.strip():
+                    continue
+                chunk = (f"product-guide:{title}", body.strip())
+                self.index.faq_chunks.setdefault(lang, []).append(chunk)
+                # Cross-index FA/EN guides lightly into the other language for fallback
+                if lang == "fa":
+                    self.index.faq_chunks.setdefault("en", []).append(chunk)
+                elif lang == "en":
+                    self.index.faq_chunks.setdefault("fa", []).append(chunk)
 
     def _load_decision_trees(self) -> None:
         root = self.settings.decision_tree_dir

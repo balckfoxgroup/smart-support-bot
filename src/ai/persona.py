@@ -166,7 +166,7 @@ Hard rules:
 6. Prefer concrete next steps. Keep answers concise for Telegram.
 7. Use prior chat turns in this session.
 8. If asked who you are: you are {AI_ASSISTANT_NAME} for {BOT_DISPLAY_NAME}.
-9. Persian Telegram RTL: start every sentence/paragraph/bullet with a Persian word; never rename official product names.
+9. Persian Telegram RTL: start every sentence/paragraph/bullet with a Persian word; never rename official product names (use Black Fox VPN Installer & Android for the installer app).
 10. Product-hub feature replies must stay short and educational (1–2 sentences).
 
 Product facts (authoritative when present):
@@ -224,6 +224,69 @@ def strip_reasoning_leak(text: str) -> str:
             if tail and not looks_like_reasoning_leak(tail):
                 return tail
     return raw
+
+
+def salvage_reply_from_reasoning(reasoning: str) -> str:
+    """Best-effort user reply when a reasoning model leaves `content` empty.
+
+    Never returns raw chain-of-thought dumps. Prefer an explicit final-answer
+    section; otherwise keep the last short block that does not look like meta.
+    """
+    raw = (reasoning or "").strip()
+    if not raw:
+        return ""
+
+    cleaned = strip_reasoning_leak(raw)
+    if cleaned and not looks_like_reasoning_leak(cleaned) and len(cleaned) >= 12:
+        if looks_incomplete_reply(cleaned):
+            return ""
+        return cleaned.strip()
+
+    # Split on blank lines / markdown headings; walk from the end.
+    parts = re.split(r"\n\s*\n+|^(?=#{1,3}\s)", cleaned or raw, flags=re.MULTILINE)
+    for part in reversed(parts):
+        chunk = (part or "").strip()
+        if len(chunk) < 12:
+            continue
+        if looks_like_reasoning_leak(chunk):
+            continue
+        if looks_incomplete_reply(chunk):
+            continue
+        # Drop bullet constraint lists / English-only planning blocks.
+        lowered = chunk.lower()
+        if lowered.startswith(("1.", "-", "*", "•")) and "constraint" in lowered:
+            continue
+        if len(chunk) > 2500:
+            chunk = chunk[:2490].rstrip() + "…"
+        return chunk
+
+    return ""
+
+
+def looks_incomplete_reply(text: str) -> bool:
+    """True when the model cut off mid-sentence / mid-word."""
+    raw = (text or "").strip()
+    if not raw:
+        return True
+    if raw.endswith(("…", "...")):
+        return True
+    # Ends with sentence punctuation → treat as complete enough.
+    if re.search(r"[.!?…۔؟»\"')\]]$", raw):
+        return False
+    parts = raw.split()
+    if not parts:
+        return True
+    last = parts[-1]
+    # Very short dangling token (e.g. «ع» in «در صورت ع»)
+    if len(last) <= 2:
+        return True
+    # Persian/Latin letter hung without finishing the clause
+    if len(raw) < 80 and last[-1].isalnum():
+        return True
+    # Common truncated Persian stems
+    if re.search(r"(در صورت|اگر|برای|باید|می‌توان|می توان)\s*\S{0,2}$", raw):
+        return True
+    return False
 
 
 def download_or_site_fallback(lang: str) -> str:
