@@ -1,0 +1,18 @@
+[Unit]
+Description=Black Fox bot safe-change watchdog (backup / confirm / auto-restore)
+After=network-online.target blackfox-agent-bot.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/blackfox-agent-bot
+EnvironmentFile=/opt/blackfox-agent-bot/.env
+ExecStart=/opt/blackfox-agent-bot/.venv/bin/python -m src.safety.watchdog_main
+Restart=always
+RestartSec=3
+# Needs rights to restart the bot unit and write safety/install trees
+NoNewPrivileges=false
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

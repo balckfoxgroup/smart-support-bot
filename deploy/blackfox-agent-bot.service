@@ -1,0 +1,20 @@
+[Unit]
+Description=Black Fox VPN Telegram support bot (long polling)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/blackfox-agent-bot
+EnvironmentFile=/opt/blackfox-agent-bot/.env
+ExecStart=/opt/blackfox-agent-bot/.venv/bin/python -m src.main
+Restart=on-failure
+RestartSec=5
+# Hardening (root on dedicated VPS; ProtectSystem=full allows reading /opt/blackfox-agent-bot)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/blackfox-agent-bot/data /opt/blackfox-agent-bot/media /opt/blackfox-agent-bot/knowledge/product_catalogs
+
+[Install]
+WantedBy=multi-user.target
