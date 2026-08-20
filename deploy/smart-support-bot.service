@@ -1,0 +1,20 @@
+[Unit]
+Description=Smart Support Bot — Black Fox VPN Telegram support (long polling)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/smart-support-bot
+EnvironmentFile=/opt/smart-support-bot/.env
+ExecStart=/opt/smart-support-bot/.venv/bin/python -m src.main
+Restart=on-failure
+RestartSec=5
+# Hardening (root on dedicated VPS; ProtectSystem=full allows reading /opt/smart-support-bot)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/smart-support-bot/data /opt/smart-support-bot/media /opt/smart-support-bot/knowledge/product_catalogs
+
+[Install]
+WantedBy=multi-user.target

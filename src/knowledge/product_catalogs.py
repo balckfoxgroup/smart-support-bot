@@ -1,0 +1,607 @@
+"""Load host-editable product catalogs for menu buttons and AI answers."""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+SUPPORTED = ("fa", "en", "ru", "zh")
+
+
+@dataclass(slots=True)
+class ProductCatalog:
+    product_id: str
+    catalog_id: str
+    enabled: bool
+    menu_order: int
+    menu_emoji: str
+    title: dict[str, str]
+    short_summary: dict[str, str]
+    long_summary: dict[str, str]
+    features: list[dict[str, Any]] = field(default_factory=list)
+    does_not: dict[str, list[str]] = field(default_factory=dict)
+    keywords: list[str] = field(default_factory=list)
+    media: list[dict[str, Any]] = field(default_factory=list)
+    support: dict[str, Any] = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    def label(self, lang: str) -> str:
+        title = self.title.get(lang) or self.title.get("en") or self.product_id
+        emoji = (self.menu_emoji or "").strip()
+        return f"{emoji} {title}".strip() if emoji else title
+
+    def summary(self, lang: str) -> str:
+        return (
+            self.long_summary.get(lang)
+            or self.short_summary.get(lang)
+            or self.long_summary.get("en")
+            or self.short_summary.get("en")
+            or ""
+        )
+
+    def menu_body(self, lang: str) -> str:
+        # Hub intro: short educational copy (prefer short_summary).
+        intro = (
+            self.short_summary.get(lang)
+            or self.long_summary.get(lang)
+            or self.short_summary.get("en")
+            or self.long_summary.get("en")
+            or ""
+        ).strip()
+        lines = [f"{self.label(lang)}", "", intro]
+        feats = self.features or []
+        if feats:
+            lines.append("")
+            tip = "کلیدها را بزنید تا کوتاه یاد بگیرید:" if lang == "fa" else "Tap a key for a short tip:"
+            lines.append(tip)
+            for feat in feats[:8]:
+                if not isinstance(feat, dict):
+                    continue
+                title = (feat.get("title") or {}).get(lang) or (feat.get("title") or {}).get("en")
+                if title:
+                    lines.append(f"• {title}")
+        empty_media = [m for m in self.media if isinstance(m, dict) and not str(m.get("path") or "").strip()]
+        if empty_media and lang == "fa":
+            lines.append("")
+            lines.append("عکس‌های محصول به‌زودی اضافه می‌شوند.")
+        elif empty_media:
+            lines.append("")
+            lines.append("Product photos coming soon.")
+        return "\n".join(lines).strip()
+
+
+_CACHE: list[ProductCatalog] = []
+
+
+def product_catalogs_dir(knowledge_root: Path) -> Path:
+    return knowledge_root / "product_catalogs"
+
+
+def load_product_catalogs(knowledge_root: Path) -> list[ProductCatalog]:
+    """Scan knowledge/product_catalogs/*.json and cache enabled products."""
+    global _CACHE
+    folder = product_catalogs_dir(knowledge_root)
+    out: list[ProductCatalog] = []
+    if not folder.is_dir():
+        logger.warning("product_catalogs folder missing: %s", folder)
+        _CACHE = []
+        return _CACHE
+    for path in sorted(folder.glob("*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("Skip catalog %s: %s", path.name, exc)
+            continue
+        if not isinstance(data, dict) or not data.get("enabled", True):
+            continue
+        product_id = str(data.get("product_id") or path.stem).strip()
+        if not product_id:
+            continue
+        title = data.get("title") if isinstance(data.get("title"), dict) else {}
+        short_summary = data.get("short_summary") if isinstance(data.get("short_summary"), dict) else {}
+        long_summary = data.get("long_summary") if isinstance(data.get("long_summary"), dict) else {}
+        does_not = data.get("does_not") if isinstance(data.get("does_not"), dict) else {}
+        features = data.get("features") if isinstance(data.get("features"), list) else []
+        media = data.get("media") if isinstance(data.get("media"), list) else []
+        keywords = data.get("keywords") if isinstance(data.get("keywords"), list) else []
+        support = data.get("support") if isinstance(data.get("support"), dict) else {}
+        out.append(
+            ProductCatalog(
+                product_id=product_id,
+                catalog_id=str(data.get("catalog_id") or product_id),
+                enabled=True,
+                menu_order=int(data.get("menu_order") or 100),
+                menu_emoji=str(data.get("menu_emoji") or ""),
+                title={k: str(v) for k, v in title.items()},
+                short_summary={k: str(v) for k, v in short_summary.items()},
+                long_summary={k: str(v) for k, v in long_summary.items()},
+                features=[f for f in features if isinstance(f, dict)],
+                does_not={k: [str(x) for x in (v or [])] for k, v in does_not.items() if isinstance(v, list)},
+                keywords=[str(k) for k in keywords],
+                media=[m for m in media if isinstance(m, dict)],
+                support=support,
+                raw=data,
+            )
+        )
+    out.sort(key=lambda p: (p.menu_order, p.product_id))
+    _CACHE = out
+    logger.info("Product catalogs loaded: %s", [p.product_id for p in out])
+    return _CACHE
+
+
+def get_product_catalogs() -> list[ProductCatalog]:
+    return list(_CACHE)
+
+
+def get_product(product_id: str) -> ProductCatalog | None:
+    for item in _CACHE:
+        if item.product_id == product_id:
+            return item
+    return None
+
+
+def product_action_id(product_id: str) -> str:
+    return f"product:{product_id}"
+
+
+def parse_product_action(action: str | None) -> str | None:
+    if not action or not action.startswith("product:"):
+        return None
+    # Ignore feature actions that also start with product: — use product:id only
+    rest = action.split(":", 1)[1].strip()
+    if not rest or ":" in rest:
+        return None
+    return rest or None
+
+
+def feature_action_id(product_id: str, feature_id: str) -> str:
+    return f"pfeat:{product_id}:{feature_id}"
+
+
+def parse_feature_action(action: str | None) -> tuple[str, str] | None:
+    if not action or not action.startswith("pfeat:"):
+        return None
+    parts = action.split(":", 2)
+    if len(parts) != 3:
+        return None
+    _, product_id, feature_id = parts
+    product_id = product_id.strip()
+    feature_id = feature_id.strip()
+    if not product_id or not feature_id:
+        return None
+    return product_id, feature_id
+
+
+def feature_label(product: ProductCatalog, feature: dict[str, Any], lang: str) -> str:
+    title = (feature.get("title") or {}).get(lang) or (feature.get("title") or {}).get("en") or feature.get("id")
+    return str(title)
+
+
+def feature_body(product: ProductCatalog, feature: dict[str, Any], lang: str) -> str:
+    """Short educational reply for a product feature key (1–2 lines)."""
+    title = feature_label(product, feature, lang)
+    howto = (feature.get("howto") or {}).get(lang) or (feature.get("howto") or {}).get("en") or ""
+    if str(howto).strip():
+        return str(howto).strip()
+    summary = (feature.get("summary") or {}).get(lang) or (feature.get("summary") or {}).get("en") or ""
+    summary = str(summary).strip()
+    if lang == "fa":
+        # Keep replies educational and very concise for Telegram.
+        if summary:
+            return f"{title}\n{summary}".strip()
+        return str(title)
+    lines = [str(title)]
+    if summary:
+        lines.append(summary)
+    return "\n".join(lines).strip()
+
+
+def _normalize_query(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip().lower().replace("‌", ""))
+
+
+def match_feature_for_query(
+    query: str, *, lang: str = "fa"
+) -> tuple[ProductCatalog, dict[str, Any], float] | None:
+    """Best matching catalog feature for an Ask AI question."""
+    catalogs = get_product_catalogs()
+    if not catalogs:
+        return None
+    q = _normalize_query(query)
+    if len(q) < 3:
+        return None
+    tokens = [t for t in re.findall(r"[\w\u0600-\u06ff]+", q) if len(t) >= 3]
+    best: tuple[ProductCatalog, dict[str, Any], float] | None = None
+    for cat in catalogs:
+        for feat in cat.features or []:
+            if not isinstance(feat, dict):
+                continue
+            fid = str(feat.get("id") or "").strip().lower().replace("_", " ").replace("-", " ")
+            titles = " ".join(str(v) for v in (feat.get("title") or {}).values()).lower()
+            howto = " ".join(str(v) for v in (feat.get("howto") or {}).values()).lower()
+            summary = " ".join(str(v) for v in (feat.get("summary") or {}).values()).lower()
+            blob = f"{fid} {titles} {howto} {summary} {cat.product_id}"
+            score = 0.0
+            # Strong exact-ish hits for Full Deploy / Connect SSH style asks
+            compact_fid = fid.replace(" ", "")
+            compact_q = q.replace(" ", "").replace("-", "").replace("_", "")
+            if compact_fid and compact_fid in compact_q:
+                score += 12.0
+            if fid and fid in q:
+                score += 8.0
+            for token in tokens:
+                if token in blob:
+                    score += 1.5
+                if token in fid.replace(" ", ""):
+                    score += 2.0
+            # Persian teaching verbs boost when feature already matched a bit
+            if score >= 4 and any(w in q for w in ("آموزش", "اموزش", "چطور", "چگونه", "استفاده", "how", "tutorial")):
+                score += 3.0
+            if best is None or score > best[2]:
+                best = (cat, feat, score)
+    if best is None or best[2] < 6.0:
+        return None
+    return best
+
+
+def feature_howto_text(feature: dict[str, Any], lang: str) -> str:
+    howto = (feature.get("howto") or {}).get(lang) or (feature.get("howto") or {}).get("en") or ""
+    if str(howto).strip():
+        return str(howto).strip()
+    summary = (feature.get("summary") or {}).get(lang) or (feature.get("summary") or {}).get("en") or ""
+    title = (feature.get("title") or {}).get(lang) or (feature.get("title") or {}).get("en") or ""
+    parts = [str(title).strip(), str(summary).strip()]
+    return "\n".join(p for p in parts if p).strip()
+
+
+def resolve_media_paths_for_query(
+    query: str,
+    *,
+    project_root: Path,
+    lang: str = "fa",
+    limit: int = 2,
+    feature: dict[str, Any] | None = None,
+    product: ProductCatalog | None = None,
+) -> list[Path]:
+    """Pick relevant catalog screenshots for the question (most relevant first)."""
+    catalogs = [product] if product is not None else get_product_catalogs()
+    if not catalogs:
+        return []
+    q = _normalize_query(query)
+    tokens = [t for t in re.findall(r"[\w\u0600-\u06ff]+", q) if len(t) >= 3]
+    wanted_slots: list[str] = []
+    if feature:
+        slot = str(feature.get("media_slot") or "").strip()
+        if slot:
+            wanted_slots.append(slot)
+        related = feature.get("related_media_slots")
+        if isinstance(related, list):
+            for item in related:
+                s = str(item or "").strip()
+                if s and s not in wanted_slots:
+                    wanted_slots.append(s)
+
+    scored: list[tuple[float, Path]] = []
+    seen: set[str] = set()
+    for cat in catalogs:
+        if cat is None:
+            continue
+        for media in cat.media or []:
+            if not isinstance(media, dict):
+                continue
+            rel = str(media.get("path") or "").strip().replace("\\", "/")
+            if not rel or rel in seen:
+                continue
+            slot = str(media.get("slot") or "").strip().lower()
+            note = str(media.get("note") or "").lower()
+            blob = f"{slot} {note} {rel} {cat.product_id}".lower()
+            score = 0.0
+            if slot and slot in wanted_slots:
+                # Prefer listed related slots in order
+                score += 20.0 - wanted_slots.index(slot) * 0.5
+            for token in tokens:
+                if token in blob.replace("-", " ").replace("_", " "):
+                    score += 1.2
+                compact = token.replace("-", "").replace("_", "")
+                if compact and compact in slot.replace("-", "").replace("_", ""):
+                    score += 3.0
+            if "fulldeploy" in q.replace(" ", "").replace("-", "").replace("_", ""):
+                if "full-deploy" in slot or "full_deploy" in slot or "fulldeploy" in rel.replace("-", ""):
+                    score += 8.0
+                if slot == "panel-login":
+                    score += 3.0
+                if "operations" in slot:
+                    score += 2.0
+            if score <= 0:
+                continue
+            path = (project_root / rel).resolve()
+            if not path.is_file():
+                continue
+            seen.add(rel)
+            scored.append((score, path))
+
+    scored.sort(key=lambda x: (-x[0], str(x[1])))
+    return [p for _, p in scored[: max(1, limit)]]
+
+
+def ai_products_snippet(
+    query: str,
+    *,
+    lang: str = "en",
+    limit_chars: int = 4500,
+    product_id: str | None = None,
+) -> str:
+    """Build a prompt block from product catalogs matching the query (or one product)."""
+    catalogs = get_product_catalogs()
+    if not catalogs:
+        return ""
+    scope = (product_id or "").strip()
+    if scope:
+        cat = next((c for c in catalogs if c.product_id == scope), None)
+        if not cat:
+            return f"Product catalog scope={scope}: no catalog loaded."
+        body = cat.menu_body(lang)
+        # Include feature howto/summary for richer product-only answers
+        feat_lines: list[str] = []
+        for feat in cat.features or []:
+            if not isinstance(feat, dict):
+                continue
+            fid = str(feat.get("id") or "").strip()
+            title = (feat.get("title") or {}).get(lang) or (feat.get("title") or {}).get("en") or fid
+            summary = (feat.get("summary") or {}).get(lang) or (feat.get("summary") or {}).get("en") or ""
+            howto = (feat.get("howto") or {}).get(lang) or (feat.get("howto") or {}).get("en") or ""
+            block = f"- {title}: {summary}".strip()
+            if howto:
+                block += f"\n  howto: {howto}"
+            feat_lines.append(block)
+        parts = [
+            f"Official product catalog (scoped to {scope} only):",
+            f"### {cat.product_id}\n{body}",
+        ]
+        if feat_lines:
+            parts.append("Features:\n" + "\n".join(feat_lines))
+        return "\n\n".join(parts)[:limit_chars]
+
+    q = (query or "").lower()
+    product_ask = any(
+        w in q
+        for w in (
+            "product",
+            "محصول",
+            "catalog",
+            "کاتالوگ",
+            "installer",
+            "config builder",
+            "ربات",
+            "bot",
+            "what is",
+            "چیست",
+        )
+    )
+    scored: list[tuple[int, ProductCatalog]] = []
+    for cat in catalogs:
+        score = 0
+        blob = " ".join(
+            [
+                cat.product_id,
+                cat.catalog_id,
+                " ".join(cat.keywords),
+                " ".join(cat.title.values()),
+                " ".join(cat.short_summary.values()),
+            ]
+        ).lower()
+        for token in re.findall(r"[\w\u0600-\u06ff]+", q):
+            if len(token) < 3:
+                continue
+            if token in blob:
+                score += 2
+        if product_ask:
+            score += 1
+        if score > 0:
+            scored.append((score, cat))
+    if not scored and product_ask:
+        scored = [(1, c) for c in catalogs]
+    if not scored:
+        # Always expose a short index so AI knows which products exist.
+        lines = ["Product catalog index:"]
+        for cat in catalogs:
+            lines.append(f"- {cat.product_id}: {cat.short_summary.get(lang) or cat.short_summary.get('en') or cat.title.get('en')}")
+        return "\n".join(lines)[:limit_chars]
+
+    scored.sort(key=lambda x: (-x[0], x[1].menu_order))
+    blocks = ["Official product catalogs (authoritative feature facts):"]
+    used = 0
+    for _, cat in scored:
+        body = cat.menu_body(lang)
+        chunk = f"### {cat.product_id}\n{body}"
+        if used + len(chunk) > limit_chars:
+            break
+        blocks.append(chunk)
+        used += len(chunk)
+    return "\n\n".join(blocks)[:limit_chars]
+
+
+def slugify_product_id(name: str) -> str:
+    raw = (name or "").strip().lower()
+    raw = re.sub(r"[^\w\u0600-\u06ff]+", "-", raw, flags=re.UNICODE)
+    raw = re.sub(r"-{2,}", "-", raw).strip("-")
+    if not raw:
+        raw = "product"
+    # Prefer ASCII-ish ids for filenames; keep unicode letters if present.
+    ascii_only = re.sub(r"[^a-z0-9\-]+", "", raw)
+    return (ascii_only or "product")[:48]
+
+
+def _lang_map(text: str) -> dict[str, str]:
+    t = (text or "").strip()
+    return {code: t for code in SUPPORTED}
+
+
+def product_json_path(knowledge_root: Path, product_id: str) -> Path:
+    safe = slugify_product_id(product_id) if product_id else "product"
+    return product_catalogs_dir(knowledge_root) / f"{safe}.json"
+
+
+def list_product_files(knowledge_root: Path) -> list[Path]:
+    folder = product_catalogs_dir(knowledge_root)
+    if not folder.is_dir():
+        return []
+    return sorted(p for p in folder.glob("*.json") if p.is_file())
+
+
+def list_all_product_dicts(knowledge_root: Path) -> list[dict[str, Any]]:
+    """All catalog JSON files including disabled (for admin product manager)."""
+    out: list[dict[str, Any]] = []
+    for path in list_product_files(knowledge_root):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(data, dict):
+            data = dict(data)
+            data["_path"] = str(path)
+            out.append(data)
+    out.sort(key=lambda d: (int(d.get("menu_order") or 100), str(d.get("product_id") or "")))
+    return out
+
+
+def create_product_stub(
+    knowledge_root: Path,
+    *,
+    title: str,
+    emoji: str = "📦",
+    summary: str = "",
+    product_id: str | None = None,
+    menu_order: int | None = None,
+) -> ProductCatalog:
+    """Create a minimal enabled catalog JSON and reload cache."""
+    folder = product_catalogs_dir(knowledge_root)
+    folder.mkdir(parents=True, exist_ok=True)
+    pid = slugify_product_id(product_id or title)
+    path = folder / f"{pid}.json"
+    n = 1
+    base = pid
+    while path.exists():
+        n += 1
+        pid = f"{base}-{n}"
+        path = folder / f"{pid}.json"
+    order = menu_order
+    if order is None:
+        existing = load_product_catalogs(knowledge_root)
+        order = (max((p.menu_order for p in existing), default=0) + 10) if existing else 10
+    title_map = _lang_map(title)
+    summary_map = _lang_map(summary or title)
+    data = {
+        "schema_version": 1,
+        "catalog_id": pid,
+        "product_id": pid,
+        "enabled": True,
+        "menu_order": int(order),
+        "menu_emoji": (emoji or "📦").strip() or "📦",
+        "title": title_map,
+        "short_summary": summary_map,
+        "long_summary": summary_map,
+        "features": [],
+        "does_not": {code: [] for code in SUPPORTED},
+        "keywords": [title],
+        "media": [],
+        "support": {},
+    }
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    load_product_catalogs(knowledge_root)
+    found = get_product(pid)
+    if found is None:
+        raise RuntimeError(f"failed to load new product {pid}")
+    return found
+
+
+def update_product_fields(
+    knowledge_root: Path,
+    product_id: str,
+    *,
+    title: str | None = None,
+    emoji: str | None = None,
+    summary: str | None = None,
+    enabled: bool | None = None,
+    menu_order: int | None = None,
+) -> ProductCatalog:
+    path = product_catalogs_dir(knowledge_root) / f"{slugify_product_id(product_id)}.json"
+    # Also try exact id filename
+    alt = product_catalogs_dir(knowledge_root) / f"{product_id}.json"
+    if not path.is_file() and alt.is_file():
+        path = alt
+    if not path.is_file():
+        raise FileNotFoundError(product_id)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("invalid catalog json")
+    if title is not None:
+        data["title"] = _lang_map(title)
+        if not (summary or "").strip():
+            # keep summaries unless explicitly set
+            pass
+    if summary is not None:
+        sm = _lang_map(summary)
+        data["short_summary"] = sm
+        data["long_summary"] = sm
+    if emoji is not None:
+        data["menu_emoji"] = (emoji or "").strip() or data.get("menu_emoji") or "📦"
+    if enabled is not None:
+        data["enabled"] = bool(enabled)
+    if menu_order is not None:
+        data["menu_order"] = int(menu_order)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    load_product_catalogs(knowledge_root)
+    found = get_product(str(data.get("product_id") or product_id))
+    if found is None and not data.get("enabled", True):
+        # disabled products are filtered out of cache — rebuild a lightweight view
+        return ProductCatalog(
+            product_id=str(data.get("product_id") or product_id),
+            catalog_id=str(data.get("catalog_id") or product_id),
+            enabled=False,
+            menu_order=int(data.get("menu_order") or 100),
+            menu_emoji=str(data.get("menu_emoji") or ""),
+            title={k: str(v) for k, v in (data.get("title") or {}).items()},
+            short_summary={k: str(v) for k, v in (data.get("short_summary") or {}).items()},
+            long_summary={k: str(v) for k, v in (data.get("long_summary") or {}).items()},
+        )
+    if found is None:
+        raise RuntimeError(f"failed to reload product {product_id}")
+    return found
+
+
+def delete_product(knowledge_root: Path, product_id: str) -> bool:
+    folder = product_catalogs_dir(knowledge_root)
+    candidates = [
+        folder / f"{product_id}.json",
+        folder / f"{slugify_product_id(product_id)}.json",
+    ]
+    removed = False
+    for path in candidates:
+        if path.is_file():
+            path.unlink()
+            removed = True
+    load_product_catalogs(knowledge_root)
+    return removed
+
+
+def find_product_by_label(label: str, *, lang: str = "en") -> ProductCatalog | None:
+    needle = (label or "").strip()
+    if not needle:
+        return None
+    for cat in get_product_catalogs():
+        if cat.label(lang) == needle or cat.label("en") == needle or cat.label("fa") == needle:
+            return cat
+        if cat.product_id == needle:
+            return cat
+        titles = {str(v).strip() for v in cat.title.values()}
+        if needle in titles:
+            return cat
+    return None
+
