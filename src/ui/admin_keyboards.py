@@ -168,8 +168,8 @@ _LABELS: dict[str, dict[Lang, str]] = {
         "en": "📦 Build Catalogs From Folder",
     },
     "products_hub": {
-        "fa": "🏷 نام محصولات",
-        "en": "🏷 Products",
+        "fa": "📦 محصولات",
+        "en": "📦 Products",
     },
     "products_add": {
         "fa": "➕ افزودن محصول",
@@ -196,8 +196,20 @@ _LABELS: dict[str, dict[Lang, str]] = {
         "en": "🗑 Delete Product",
     },
     "products_build_catalog": {
-        "fa": "📦 ساخت/تکمیل کاتالوگ",
-        "en": "📦 Build / Enrich Catalog",
+        "fa": "🗂 کاتالوگ محصول",
+        "en": "🗂 Product catalog",
+    },
+    "products_product_chat": {
+        "fa": "💬 گفتگو با ربات",
+        "en": "💬 Chat With Bot",
+    },
+    "products_ai_training": {
+        "fa": "ارسال متن آموزشی برای ai",
+        "en": "Send AI training text",
+    },
+    "products_catalog_enrich": {
+        "fa": "📝 تکمیل اطلاعات کاتالوگ",
+        "en": "📝 Complete catalog info",
     },
     "products_back": {
         "fa": "↩️ بازگشت به محصولات",
@@ -491,7 +503,7 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
             "⚙️ تنظیمات\n\n"
             "• 📋 اطلاعات اصلی (سایت/کانال/گروه/پشتیبانی)\n"
             "• 💬 گفتگو با ربات (کل تنظیمات)\n"
-            "• 🏷 نام محصولات (افزودن/ویرایش/حذف و کاتالوگ)\n"
+            "• 📦 محصولات (افزودن/ویرایش/حذف و کاتالوگ)\n"
             "• 📝 ایجنت و API / 📨 پیام‌ها / 🖥 پنل\n"
             "• 🛠 تماس با سازنده (قفل)"
         ),
@@ -506,13 +518,13 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
     },
     "products_hub_intro": {
         "fa": (
-            "🏷 نام محصولات\n\n"
+            "📦 محصولات\n\n"
             "منوی اصلی از کاتالوگ‌های این بخش ساخته می‌شود.\n"
             "محصول جدید بسازید، ویرایش/حذف کنید، یا برای تکمیل محتوا کاتالوگ بسازید.\n"
             "تعداد محصول محدودیت ندارد. نصب تازه پیش‌فرض خالی است."
         ),
         "en": (
-            "🏷 Products\n\n"
+            "📦 Products\n\n"
             "The main menu is built from catalogs here.\n"
             "Add, edit, or delete products, then enrich via catalog build.\n"
             "No product limit. Fresh installs start empty."
@@ -610,16 +622,29 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
     },
     "catalog_wizard_intro": {
         "fa": (
-            "📦 ساخت کاتالوگ\n\n"
-            "۱) منابع کمکی را انتخاب کنید (اختیاری)\n"
-            "۲) مسیر پوشه روی سرور را بفرستید، یا فایل ZIP/عکس/متن آپلود کنید\n"
-            "۳) ساخت را بزنید"
+            "کاتالوگ همین محصول ({product})\n"
+            "تعداد عکس در پوشهٔ این محصول: {photo_count}\n\n"
+            "عکس یا متن را همین‌جا بفرستید؛ برای متن آموزشی از کلید "
+            "«ارسال متن آموزشی برای ai» استفاده کنید.\n"
+            "برای ثبت نهایی کاتالوگ «ساخت کاتالوگ» را بزنید."
         ),
         "en": (
-            "📦 Catalog build\n\n"
-            "1) Pick optional sources\n"
-            "2) Send a folder path on the server, or upload ZIP/photos/text\n"
-            "3) Tap Build"
+            "Catalog for this product ({product})\n"
+            "Photos in this product folder: {photo_count}\n\n"
+            "Send a photo or text here. Use Send AI training text for long teaching notes.\n"
+            "Tap Build Catalog when you want a full rebuild."
+        ),
+    },
+    "products_product_chat_intro": {
+        "fa": (
+            "💬 گفتگو با ربات — فقط دربارهٔ همین محصول.\n\n"
+            "هر نکته، آموزش یا موردی که AI باید بداند را همین‌جا بنویسید. "
+            "ربات همان محصول را به‌روز می‌کند و در پاسخ به کاربرها از آن استفاده می‌کند."
+        ),
+        "en": (
+            "💬 Chat With Bot — this product only.\n\n"
+            "Write any tip, training, or fact the AI should know. "
+            "It is stored on this product and used in later user answers."
         ),
     },
     "catalog_src_site": {
@@ -635,8 +660,73 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
         "en": "👥 Group source",
     },
     "catalog_ask_path": {
-        "fa": "📁 مسیر پوشه روی سرور را بفرستید، یا فایل ZIP / متن / عکس آپلود کنید.",
-        "en": "📁 Send a server folder path, or upload ZIP / text / photos.",
+        "fa": "📁 مسیر پوشه روی سرور را بفرستید، یا همین‌جا عکس و متن همین محصول را بفرستید.",
+        "en": "📁 Send a server folder path, or send this product's photos and text here.",
+    },
+    "catalog_ask_source": {
+        "fa": (
+            "مقدار ذخیره‌شده قبلی:\n{saved}\n\n"
+            "مقدار جدید را بفرستید. بعد با نوشتن «تایید» یا «عدم تایید» مشخص کنید "
+            "آیا در کاتالوگ استفاده شود."
+        ),
+        "en": (
+            "Previously saved value:\n{saved}\n\n"
+            "Send the new value. Then type Confirm or Decline to decide if the catalog should use it."
+        ),
+    },
+    "catalog_ask_confirm": {
+        "fa": "برای استفاده در کاتالوگ «تایید» و برای رد «عدم تایید» را بفرستید.",
+        "en": "Type Confirm to use this in the catalog, or Decline to skip it.",
+    },
+    "catalog_confirm_preview": {
+        "fa": (
+            "آمادهٔ ارسال به AI و سرور.\n"
+            "عکس‌ها: {photo_count}\n"
+            "سایت: {site}\n"
+            "کانال: {channel}\n"
+            "گروه: {group}\n"
+            "یادداشت‌های راهنما: {notes}\n\n"
+            "اگر می‌خواهید ثبت شود «تایید» بفرستید؛ وگرنه «عدم تایید»."
+        ),
+        "en": (
+            "Ready to send to AI and the server.\n"
+            "Photos: {photo_count}\n"
+            "Site: {site}\n"
+            "Channel: {channel}\n"
+            "Group: {group}\n"
+            "Guide notes: {notes}\n\n"
+            "Type Confirm to register, or Decline to cancel."
+        ),
+    },
+    "catalog_declined": {
+        "fa": "ثبت نشد. اطلاعات قبلی همان‌طور ماند.",
+        "en": "Not saved. Previous data was kept.",
+    },
+    "catalog_enrich_intro": {
+        "fa": (
+            "عکس یا متن کاتالوگ را بفرستید.\n"
+            "بعد از هر مورد، یک توضیح کوتاه برای راهنمایی AI بنویسید.\n"
+            "برای ثبت نهایی از کلید «ساخت کاتالوگ» استفاده کنید."
+        ),
+        "en": (
+            "Send a catalog photo or text.\n"
+            "After each item, write a short AI guide note.\n"
+            "Tap Build Catalog when you want to register everything."
+        ),
+    },
+    "catalog_enrich_ask_note": {
+        "fa": "برای همین مورد، توضیح راهنمای AI را بفرستید (AI از این متن در پاسخ‌ها استفاده می‌کند).",
+        "en": "Send the AI guide note for this item (used in later user answers).",
+    },
+    "products_ask_training": {
+        "fa": (
+            "متن آموزشی فعلی:\n{saved}\n\n"
+            "متن آموزشی جدید را بفرستید. AI با همین متن به سؤال کاربر جواب می‌دهد."
+        ),
+        "en": (
+            "Current training text:\n{saved}\n\n"
+            "Send the new training text. The AI will answer users from this text."
+        ),
     },
     "catalog_run": {
         "fa": "✅ ساخت کاتالوگ",
@@ -1163,6 +1253,7 @@ def product_detail_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
             "products_edit_summary",
             "products_toggle",
             "products_build_catalog",
+            "products_product_chat",
             "products_delete",
             "products_back",
             "settings_back",
@@ -1187,7 +1278,9 @@ def catalog_wizard_keyboard(lang: str | None = "en", *, sources: dict[str, bool]
         KeyboardButton(text=mark(bool(sources.get("site")), "catalog_src_site")),
         KeyboardButton(text=mark(bool(sources.get("channel")), "catalog_src_channel")),
         KeyboardButton(text=mark(bool(sources.get("group")), "catalog_src_group")),
+        KeyboardButton(text=label("products_ai_training", lang)),
         KeyboardButton(text=label("catalog_run", lang)),
+        KeyboardButton(text=label("products_back", lang)),
         KeyboardButton(text=label("settings_back", lang)),
     ]
     return ReplyKeyboardMarkup(

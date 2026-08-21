@@ -145,6 +145,17 @@ async def run() -> None:
     catalog = CatalogSiteSearch(settings)
     catalog.load()
 
+    from src.knowledge.refresh import register_knowledge_reload
+
+    def _reload_ai_knowledge() -> None:
+        load_product_catalogs(settings.knowledge_root)
+        knowledge.load()
+        intents.load()
+        catalog.load()
+        log.info("AI knowledge reloaded after catalog/product change")
+
+    register_knowledge_reload(_reload_ai_knowledge)
+
     ai = AIClient(settings, control=control)
     await ai.start()
 

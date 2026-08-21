@@ -366,6 +366,32 @@ def ai_products_snippet(
         ]
         if feat_lines:
             parts.append("Features:\n" + "\n".join(feat_lines))
+        train = str((cat.raw or {}).get("ai_training_text") or "").strip()
+        if train:
+            parts.append("Operator training notes (authoritative for user answers):\n" + train)
+        mats = (cat.raw or {}).get("operator_materials")
+        if isinstance(mats, list) and mats:
+            lines = ["Operator catalog materials:"]
+            for item in mats[:20]:
+                if not isinstance(item, dict):
+                    continue
+                txt = str(item.get("text") or "").strip()
+                guide = str(item.get("ai_guide") or "").strip()
+                if txt:
+                    lines.append(f"- material: {txt}")
+                if guide:
+                    lines.append(f"  ai_guide: {guide}")
+            parts.append("\n".join(lines))
+        media_guides = []
+        for media in cat.media or []:
+            if not isinstance(media, dict):
+                continue
+            guide = str(media.get("ai_guide") or media.get("note") or "").strip()
+            path = str(media.get("path") or "").strip()
+            if guide:
+                media_guides.append(f"- {path or 'photo'}: {guide}")
+        if media_guides:
+            parts.append("Photo/text AI guides:\n" + "\n".join(media_guides[:24]))
         return "\n\n".join(parts)[:limit_chars]
 
     q = (query or "").lower()
@@ -419,7 +445,9 @@ def ai_products_snippet(
     used = 0
     for _, cat in scored:
         body = cat.menu_body(lang)
-        chunk = f"### {cat.product_id}\n{body}"
+        train = str((cat.raw or {}).get("ai_training_text") or "").strip()
+        extra = f"\nOperator training notes:\n{train[:1200]}" if train else ""
+        chunk = f"### {cat.product_id}\n{body}{extra}"
         if used + len(chunk) > limit_chars:
             break
         blocks.append(chunk)
@@ -512,9 +540,20 @@ def create_product_stub(
         "keywords": [title],
         "media": [],
         "support": {},
+        "ai_training_text": "",
+        "catalog_sources": {
+            "site": {"value": "", "use": False},
+            "channel": {"value": "", "use": False},
+            "group": {"value": "", "use": False},
+        },
+        "operator_materials": [],
     }
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    ensure_product_asset_dirs(knowledge_root.parent, knowledge_root, pid)
     load_product_catalogs(knowledge_root)
+    from src.knowledge.refresh import notify_knowledge_changed
+
+    notify_knowledge_changed()
     found = get_product(pid)
     if found is None:
         raise RuntimeError(f"failed to load new product {pid}")
@@ -558,6 +597,9 @@ def update_product_fields(
         data["menu_order"] = int(menu_order)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     load_product_catalogs(knowledge_root)
+    from src.knowledge.refresh import notify_knowledge_changed
+
+    notify_knowledge_changed()
     found = get_product(str(data.get("product_id") or product_id))
     if found is None and not data.get("enabled", True):
         # disabled products are filtered out of cache — rebuild a lightweight view
@@ -588,6 +630,10 @@ def delete_product(knowledge_root: Path, product_id: str) -> bool:
             path.unlink()
             removed = True
     load_product_catalogs(knowledge_root)
+    if removed:
+        from src.knowledge.refresh import notify_knowledge_changed
+
+        notify_knowledge_changed()
     return removed
 
 
@@ -604,4 +650,80 @@ def find_product_by_label(label: str, *, lang: str = "en") -> ProductCatalog | N
         if needle in titles:
             return cat
     return None
+
+
+def resolve_product_json_path(knowledge_root: Path, product_id: str) -> Path | None:
+    folder = product_catalogs_dir(knowledge_root)
+    for cand in (
+        folder / f"{product_id}.json",
+        folder / f"{slugify_product_id(product_id)}.json",
+    ):
+        if cand.is_file():
+            return cand
+    return None
+
+
+def load_product_raw(knowledge_root: Path, product_id: str) -> dict[str, Any] | None:
+    path = resolve_product_json_path(knowledge_root, product_id)
+    if path is None:
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def save_product_raw(knowledge_root: Path, product_id: str, data: dict[str, Any]) -> None:
+    path = resolve_product_json_path(knowledge_root, product_id)
+    if path is None:
+        path = product_catalogs_dir(knowledge_root) / f"{slugify_product_id(product_id)}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    load_product_catalogs(knowledge_root)
+    from src.knowledge.refresh import notify_knowledge_changed
+
+    notify_knowledge_changed()
+
+
+def product_media_dir(project_root: Path, product_id: str) -> Path:
+    pid = slugify_product_id(product_id) if product_id else "product"
+    path = project_root / "media" / "catalogs" / pid
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def ensure_product_asset_dirs(project_root: Path, knowledge_root: Path, product_id: str) -> Path:
+    """One folder per product for catalog photos/text (named like the product id)."""
+    media = product_media_dir(project_root, product_id)
+    inbox = knowledge_root / "catalog_inbox" / slugify_product_id(product_id)
+    inbox.mkdir(parents=True, exist_ok=True)
+    return media
+
+
+def count_product_photos(
+    knowledge_root: Path,
+    project_root: Path,
+    product_id: str,
+    *,
+    staging: Path | None = None,
+) -> int:
+    names: set[str] = set()
+    data = load_product_raw(knowledge_root, product_id) or {}
+    for media in data.get("media") or []:
+        if not isinstance(media, dict):
+            continue
+        rel = str(media.get("path") or "").strip().replace("\\", "/")
+        if rel:
+            names.add(Path(rel).name.lower())
+    media_dir = project_root / "media" / "catalogs" / product_id
+    if media_dir.is_dir():
+        for path in media_dir.iterdir():
+            if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+                names.add(path.name.lower())
+    if staging is not None and staging.is_dir():
+        for path in staging.rglob("*"):
+            if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+                names.add(path.name.lower())
+    return len(names)
 

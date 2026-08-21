@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 from pathlib import Path
@@ -29,14 +30,21 @@ from src.custom_buttons import (
 from src.health_report import build_health_report
 from src.knowledge.catalog_builder import build_one_catalog, prepare_work_folder
 from src.knowledge.product_catalogs import (
+    ai_products_snippet,
+    count_product_photos,
     create_product_stub,
     delete_product,
+    ensure_product_asset_dirs,
     find_product_by_label,
     get_product,
     list_all_product_dicts,
     load_product_catalogs,
+    load_product_raw,
+    product_media_dir,
+    save_product_raw,
     update_product_fields,
 )
+from src.knowledge.refresh import notify_knowledge_changed
 from src.storage.bot_settings import SLOT_KINDS, TARGET_KEYS, BotSettingsStore
 from src.storage.users import UserStore
 from src.ui import admin_keyboards as ak
@@ -259,10 +267,204 @@ def _expect_for_target(target_key: str) -> str | None:
     }.get(target_key)
 
 
-def _staging_dir(settings: Settings, admin_id: int) -> Path:
+def _staging_dir(settings: Settings, admin_id: int, product_id: str = "") -> Path:
+    pid = (product_id or "").strip()
+    if pid:
+        return product_media_dir(settings.project_root, pid)
     path = settings.data_dir / "catalog_staging" / str(admin_id)
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+_CONFIRM_YES = frozenset(
+    {"تایید", "تاييد", "تأیید", "تاکید", "confirm", "yes", "ok", "✅"}
+)
+_CONFIRM_NO = frozenset(
+    {"عدم تایید", "عدم تاييد", "عدم تأیید", "decline", "no", "cancel"}
+)
+
+
+def _is_yes(text: str) -> bool:
+    return (text or "").strip().lower() in {x.lower() for x in _CONFIRM_YES}
+
+
+def _is_no(text: str) -> bool:
+    return (text or "").strip().lower() in {x.lower() for x in _CONFIRM_NO}
+
+
+def _enrich_notes_path(staging: Path) -> Path:
+    return staging / "_enrich_notes.json"
+
+
+def _load_enrich_notes(staging: Path) -> list[dict[str, Any]]:
+    path = _enrich_notes_path(staging)
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return []
+    return [x for x in data if isinstance(x, dict)] if isinstance(data, list) else []
+
+
+def _save_enrich_notes(staging: Path, notes: list[dict[str, Any]]) -> None:
+    staging.mkdir(parents=True, exist_ok=True)
+    _enrich_notes_path(staging).write_text(
+        json.dumps(notes, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def _source_record(raw: dict[str, Any] | None, key: str) -> dict[str, Any]:
+    block = (raw or {}).get("catalog_sources")
+    if not isinstance(block, dict):
+        return {"value": "", "use": False}
+    item = block.get(key)
+    if isinstance(item, dict):
+        return {
+            "value": str(item.get("value") or "").strip(),
+            "use": bool(item.get("use")),
+        }
+    if isinstance(item, bool):
+        return {"value": "", "use": item}
+    if isinstance(item, str):
+        return {"value": item.strip(), "use": bool(item.strip())}
+    return {"value": "", "use": False}
+
+
+def _source_marks(raw: dict[str, Any] | None) -> dict[str, bool]:
+    return {
+        key: bool(_source_record(raw, key).get("use") and _source_record(raw, key).get("value"))
+        for key in ("site", "channel", "group")
+    }
+
+
+def _write_guide_files(folder: Path, *, training: str, extras: str, notes: list[dict[str, Any]]) -> None:
+    chunks: list[str] = []
+    if training.strip():
+        chunks.append("### OPERATOR TRAINING\n" + training.strip())
+    if extras.strip():
+        chunks.append("### CONFIRMED SOURCES\n" + extras.strip())
+    for item in notes:
+        kind = str(item.get("kind") or "")
+        guide = str(item.get("ai_note") or "").strip()
+        if kind == "text":
+            chunks.append(
+                "### OPERATOR TEXT\n"
+                + str(item.get("text") or "").strip()
+                + (f"\nAI_GUIDE: {guide}" if guide else "")
+            )
+        elif kind == "photo":
+            chunks.append(
+                "### PHOTO "
+                + Path(str(item.get("path") or "")).name
+                + (f"\nAI_GUIDE: {guide}" if guide else "")
+            )
+    if chunks:
+        (folder / "ai_guide_notes.txt").write_text("\n\n".join(chunks) + "\n", encoding="utf-8")
+
+
+async def _execute_catalog_build(
+    *,
+    message: Message,
+    settings: Settings,
+    bot_settings: BotSettingsStore,
+    uid: int,
+    lang: str,
+    sess: dict[str, Any],
+    ai: AIClient,
+) -> None:
+    hint = str(sess.get("product_hint") or sess.get("product_id") or "").strip()
+    staging = Path(
+        str(sess.get("catalog_staging") or _staging_dir(settings, uid, hint))
+    )
+    folder_path = str(sess.get("catalog_path") or "").strip()
+    if not hint:
+        hint = Path(folder_path).name if folder_path else "product"
+    raw = load_product_raw(settings.knowledge_root, hint) or {}
+    notes = _load_enrich_notes(staging)
+    extras: list[str] = []
+    for key, title in (("site", "Official site"), ("channel", "Official channel"), ("group", "Official group")):
+        rec = _source_record(raw, key)
+        if rec.get("use") and rec.get("value"):
+            extras.append(f"{title}: {rec['value']}")
+    await message.answer(ak.msg("catalog_building", lang))
+    try:
+        staging.mkdir(parents=True, exist_ok=True)
+        (staging / "operator_seed.txt").write_text(
+            f"product_id={hint}\n", encoding="utf-8"
+        )
+        has_staging = staging.is_dir() and any(
+            p.is_file() for p in staging.rglob("*") if p.name != "_enrich_notes.json"
+        )
+        if not has_staging and not folder_path:
+            media_dir = settings.project_root / "media" / "catalogs" / hint
+            if media_dir.is_dir() and any(media_dir.iterdir()):
+                folder_path = str(media_dir)
+        folder = prepare_work_folder(
+            knowledge_root=settings.knowledge_root,
+            folder_path=folder_path or None,
+            staging_dir=staging if has_staging else None,
+            product_hint=hint,
+        )
+        training = str(raw.get("ai_training_text") or "")
+        _write_guide_files(folder, training=training, extras="\n".join(extras), notes=notes)
+        pid = await build_one_catalog(
+            folder,
+            ai.chat,
+            knowledge_root=settings.knowledge_root,
+            project_root=settings.project_root,
+            extra_sources="\n".join(extras),
+            reload_fn=notify_knowledge_changed,
+            force_product_id=hint,
+            enrich_notes=notes,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("catalog wizard failed: %s", exc)
+        cause = str(exc)
+        await message.answer(
+            (
+                "❌ روند ساخت کاتالوگ ناموفق بود.\n"
+                f"علت: {cause}\n"
+                "عکس/متن را دوباره بفرستید و دوباره «ساخت کاتالوگ» را بزنید."
+            )
+            if (lang or "").startswith("fa")
+            else f"❌ Catalog build failed.\nCause: {cause}",
+            reply_markup=ak.catalog_wizard_keyboard(lang, sources=_source_marks(raw)),
+        )
+        return
+
+    from src.knowledge.catalog_media_ingest import IngestResult, reindex_product_media_with_ai
+
+    try:
+        idx = await reindex_product_media_with_ai(
+            knowledge_root=settings.knowledge_root,
+            project_root=settings.project_root,
+            product_id=pid,
+            ai=ai,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("catalog media reindex failed: %s", exc)
+        idx = IngestResult(
+            ok=False,
+            product_id=pid,
+            files_added=[],
+            message_fa=f"ساخت کاتالوگ OK بود؛ ایندکس تصاویر ناموفق. علت: {exc}",
+            message_en=f"Catalog built; media reindex failed: {exc}",
+            detail=str(exc),
+        )
+    notify_knowledge_changed()
+    done = ak.msg("catalog_done", lang).format(ids=pid)
+    if (lang or "").startswith("fa"):
+        done += "\n\nروند ارسال به AI و سرور با موفقیت انجام شد."
+        done += f"\n{idx.message_fa}"
+    else:
+        done += "\n\nSend to AI and server completed successfully."
+        done += f"\n{idx.message_en}"
+    await message.answer(done, reply_markup=ak.product_detail_keyboard(lang))
+    await bot_settings.set_session(
+        uid,
+        {"mode": "product_detail", "product_id": str(sess.get("product_id") or pid)},
+    )
 
 
 async def _lang(users: UserStore, message: Message) -> str:
@@ -375,31 +577,36 @@ async def _show_panel(message: Message, store: BotSettingsStore, lang: str) -> N
 
 
 async def _show_catalog_wizard(
-    message: Message, store: BotSettingsStore, uid: int, lang: str
+    message: Message,
+    store: BotSettingsStore,
+    uid: int,
+    lang: str,
+    *,
+    settings: Settings,
 ) -> None:
     sess = await store.get_session(uid)
-    sources = sess.get("catalog_sources") or {"site": False, "channel": False, "group": False}
-    path = sess.get("catalog_path") or ""
-    staging = Path(str(sess.get("catalog_staging") or ""))
-    files = 0
-    if staging.is_dir():
-        files = sum(1 for p in staging.rglob("*") if p.is_file())
-    body = ak.msg("catalog_wizard_intro", lang)
-    body += "\n\n" + ak.msg("catalog_src_toggled", lang).format(
-        site=("بله" if sources.get("site") else "خیر")
-        if (lang or "").startswith("fa")
-        else ("yes" if sources.get("site") else "no"),
-        channel=("بله" if sources.get("channel") else "خیر")
-        if (lang or "").startswith("fa")
-        else ("yes" if sources.get("channel") else "no"),
-        group=("بله" if sources.get("group") else "خیر")
-        if (lang or "").startswith("fa")
-        else ("yes" if sources.get("group") else "no"),
+    pid = str(sess.get("product_id") or sess.get("product_hint") or "").strip()
+    staging = Path(str(sess.get("catalog_staging") or _staging_dir(settings, uid)))
+    raw = load_product_raw(settings.knowledge_root, pid) if pid else None
+    if pid:
+        ensure_product_asset_dirs(settings.project_root, settings.knowledge_root, pid)
+        staging = product_media_dir(settings.project_root, pid)
+    photos = count_product_photos(
+        settings.knowledge_root,
+        settings.project_root,
+        pid,
+        staging=None,
     )
-    body += "\n" + _fmt_current(lang, path or ("—" if not files else f"{files} uploaded file(s)"))
+    raw_title = ((raw or {}).get("title") or {})
+    pname = str(raw_title.get("fa") or raw_title.get("en") or pid or "—")
+    body = ak.msg("catalog_wizard_intro", lang).format(photo_count=photos, product=pname)
+    marks = _source_marks(raw)
+    sess_marks = sess.get("catalog_source_marks")
+    if isinstance(sess_marks, dict):
+        marks = {**marks, **{k: bool(v) for k, v in sess_marks.items()}}
     await message.answer(
         body,
-        reply_markup=ak.catalog_wizard_keyboard(lang, sources=sources),
+        reply_markup=ak.catalog_wizard_keyboard(lang, sources=marks),
     )
 
 
@@ -498,6 +705,9 @@ def setup_admin_settings_router(
         | ak.texts("products_toggle")
         | ak.texts("products_delete")
         | ak.texts("products_build_catalog")
+        | ak.texts("products_catalog_enrich")
+        | ak.texts("products_ai_training")
+        | ak.texts("products_product_chat")
         | ak.texts("products_back")
         | ak.texts("catalog_src_site")
         | ak.texts("catalog_src_channel")
@@ -800,7 +1010,7 @@ def setup_admin_settings_router(
             slot_index = sess.get("slot_index")
             mode = str(sess.get("mode") or "")
             if mode == "catalog_wizard":
-                await _show_catalog_wizard(message, bot_settings, uid, lang)
+                await _show_catalog_wizard(message, bot_settings, uid, lang, settings=settings)
                 return
             if mode in {
                 "products_hub",
@@ -809,6 +1019,13 @@ def setup_admin_settings_router(
                 "products_add_emoji",
                 "products_add_summary",
                 "products_edit",
+                "products_ai_training",
+                "product_ai_chat",
+                "catalog_enrich",
+                "catalog_enrich_note",
+                "catalog_source_wait",
+                "catalog_source_confirm",
+                "catalog_run_confirm",
             }:
                 await bot_settings.set_session(uid, {"mode": "products_hub"})
                 await _show_products_hub(message, settings, lang)
@@ -840,6 +1057,22 @@ def setup_admin_settings_router(
             return
 
         if action == "bot_config_chat":
+            sess = await bot_settings.get_session(uid)
+            pid = str(sess.get("product_id") or "").strip()
+            if pid and str(sess.get("mode") or "") in {
+                "product_detail",
+                "catalog_wizard",
+                "catalog_enrich",
+                "product_ai_chat",
+            }:
+                await bot_settings.set_session(
+                    uid, {"mode": "product_ai_chat", "product_id": pid, "history": []}
+                )
+                await message.answer(
+                    ak.msg("products_product_chat_intro", lang),
+                    reply_markup=ak.product_detail_keyboard(lang),
+                )
+                return
             await bot_settings.set_session(uid, {"mode": "bot_config_chat", "history": []})
             await message.answer(
                 ak.msg("bot_chat_start", lang),
@@ -872,6 +1105,9 @@ def setup_admin_settings_router(
             "products_toggle",
             "products_delete",
             "products_build_catalog",
+            "products_catalog_enrich",
+            "products_ai_training",
+            "products_product_chat",
         }:
             sess = await bot_settings.get_session(uid)
             pid = str(sess.get("product_id") or "").strip()
@@ -903,34 +1139,51 @@ def setup_admin_settings_router(
                 await message.answer(ak.msg("products_deleted", lang))
                 await _show_products_hub(message, settings, lang)
                 return
-            if action == "products_build_catalog":
-                staging = _staging_dir(settings, uid)
-                # Keep already-uploaded photos (user often sends media before tapping Build).
-                has_files = staging.is_dir() and any(staging.iterdir())
-                if not has_files:
-                    if staging.exists():
-                        shutil.rmtree(staging, ignore_errors=True)
-                    staging.mkdir(parents=True, exist_ok=True)
+            if action == "products_product_chat":
+                await bot_settings.set_session(
+                    uid, {"mode": "product_ai_chat", "product_id": pid, "history": []}
+                )
+                await message.answer(
+                    ak.msg("products_product_chat_intro", lang),
+                    reply_markup=ak.product_detail_keyboard(lang),
+                )
+                return
+            if action == "products_ai_training":
+                raw = load_product_raw(settings.knowledge_root, pid) or {}
+                saved = str(raw.get("ai_training_text") or "").strip() or "—"
+                await bot_settings.set_session(
+                    uid,
+                    {
+                        "mode": "products_ai_training",
+                        "product_id": pid,
+                        "from_catalog_wizard": True,
+                        "catalog_staging": str(_staging_dir(settings, uid, pid)),
+                    },
+                )
+                await message.answer(
+                    ak.msg("products_ask_training", lang).format(saved=saved),
+                    reply_markup=ak.cancel_keyboard(lang),
+                )
+                return
+            if action in {"products_build_catalog", "products_catalog_enrich"}:
+                ensure_product_asset_dirs(
+                    settings.project_root, settings.knowledge_root, pid
+                )
+                staging = _staging_dir(settings, uid, pid)
+                staging.mkdir(parents=True, exist_ok=True)
                 await bot_settings.set_session(
                     uid,
                     {
                         "mode": "catalog_wizard",
-                        "catalog_sources": {"site": False, "channel": False, "group": False},
                         "catalog_path": "",
                         "catalog_staging": str(staging),
                         "product_id": pid,
                         "product_hint": pid,
                     },
                 )
-                await _show_catalog_wizard(message, bot_settings, uid, lang)
-                if has_files:
-                    await message.answer(
-                        "عکس‌های قبلی نگه داشته شدند. منابع را انتخاب کنید و «ساخت کاتالوگ» را بزنید."
-                        if (lang or "").startswith("fa")
-                        else "Previous uploads kept. Pick sources, then tap Build Catalog.",
-                    )
-                else:
-                    await message.answer(ak.msg("catalog_ask_path", lang))
+                await _show_catalog_wizard(
+                    message, bot_settings, uid, lang, settings=settings
+                )
                 return
             field = {
                 "products_edit_title": "title",
@@ -950,10 +1203,9 @@ def setup_admin_settings_router(
             return
 
         if action == "build_catalogs":
-            # Legacy entry: catalog build now lives under Products.
             await bot_settings.set_session(uid, {"mode": "products_hub"})
             tip = (
-                "ساخت کاتالوگ از مسیر «نام محصولات» انجام می‌شود.\n"
+                "ساخت کاتالوگ از مسیر «محصولات» انجام می‌شود.\n"
                 "محصول را انتخاب کنید و «ساخت/تکمیل کاتالوگ» را بزنید."
                 if (lang or "").startswith("fa")
                 else (
@@ -967,133 +1219,74 @@ def setup_admin_settings_router(
 
         if action in {"catalog_src_site", "catalog_src_channel", "catalog_src_group"}:
             sess = await bot_settings.get_session(uid)
-            if sess.get("mode") != "catalog_wizard":
+            if sess.get("mode") not in {
+                "catalog_wizard",
+                "catalog_enrich",
+                "catalog_source_wait",
+                "catalog_source_confirm",
+                "catalog_run_confirm",
+            }:
                 await _show_settings_hub(message, lang, bot_settings)
                 return
-            sources = dict(sess.get("catalog_sources") or {})
             key = action.replace("catalog_src_", "")
-            sources[key] = not bool(sources.get(key))
-            sess["catalog_sources"] = sources
+            pid = str(sess.get("product_id") or "").strip()
+            raw = load_product_raw(settings.knowledge_root, pid) or {}
+            rec = _source_record(raw, key)
+            owner = await bot_settings.get_owner()
+            fallback = {
+                "site": owner.site_url,
+                "channel": owner.channel,
+                "group": owner.group,
+            }.get(key) or ""
+            saved = rec.get("value") or fallback or "—"
+            sess["mode"] = "catalog_source_wait"
+            sess["catalog_source_key"] = key
             await bot_settings.set_session(uid, sess)
-            await _show_catalog_wizard(message, bot_settings, uid, lang)
+            await message.answer(
+                ak.msg("catalog_ask_source", lang).format(saved=saved),
+                reply_markup=ak.catalog_wizard_keyboard(lang, sources=_source_marks(raw)),
+            )
             return
 
         if action == "catalog_run":
             sess = await bot_settings.get_session(uid)
-            # Recover wizard context if session was partially lost after uploads.
             staging = Path(str(sess.get("catalog_staging") or _staging_dir(settings, uid)))
-            if sess.get("mode") != "catalog_wizard":
-                if staging.is_dir() and any(staging.iterdir()):
-                    sess = {
-                        **sess,
-                        "mode": "catalog_wizard",
-                        "catalog_sources": sess.get("catalog_sources")
-                        or {"site": False, "channel": False, "group": False},
-                        "catalog_path": str(sess.get("catalog_path") or ""),
-                        "catalog_staging": str(staging),
-                    }
-                    await bot_settings.set_session(uid, sess)
-                else:
-                    await message.answer(
-                        "اول محصول را باز کنید و عکس/فایل بفرستید، بعد ساخت کاتالوگ را بزنید."
-                        if (lang or "").startswith("fa")
-                        else "Open a product, upload files/photos, then tap Build Catalog.",
-                        reply_markup=await _settings_kb(lang, bot_settings),
-                    )
-                    return
-            if ai is None:
-                await message.answer("AI unavailable.", reply_markup=await _settings_kb(lang, bot_settings))
-                return
-            sources = sess.get("catalog_sources") or {}
-            folder_path = str(sess.get("catalog_path") or "").strip()
-            await message.answer(ak.msg("catalog_building", lang))
-            try:
-                hint = str(sess.get("product_hint") or sess.get("product_id") or "").strip()
-                if not hint:
-                    hint = Path(folder_path).name if folder_path else "product"
-                folder = prepare_work_folder(
-                    knowledge_root=settings.knowledge_root,
-                    folder_path=folder_path or None,
-                    staging_dir=staging if staging.is_dir() else None,
-                    product_hint=hint,
-                )
-                owner = await bot_settings.get_owner()
-                extras: list[str] = []
-                if sources.get("site") and owner.site_url:
-                    extras.append(f"Official site: {owner.site_url}")
-                if sources.get("channel") and owner.channel:
-                    extras.append(f"Official channel: {owner.channel}")
-                if sources.get("group") and owner.group:
-                    extras.append(f"Official group: {owner.group}")
-                pid = await build_one_catalog(
-                    folder,
-                    ai.chat,
-                    knowledge_root=settings.knowledge_root,
-                    project_root=settings.project_root,
-                    extra_sources="\n".join(extras),
-                    reload_fn=lambda: load_product_catalogs(settings.knowledge_root),
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("catalog wizard failed: %s", exc)
-                cause = str(exc)
+            pid = str(sess.get("product_id") or sess.get("product_hint") or "").strip()
+            if not pid:
                 await message.answer(
-                    (
-                        "❌ روند آپدیت کاتالوگ ناموفق بود.\n"
-                        f"علت: {cause}\n"
-                        "راه‌حل: عکس/فایل را دوباره بفرستید، مسیر پوشه را درست کنید، "
-                        "و مطمئن شوید AI در دسترس است؛ بعد دوباره Build Catalog را بزنید."
-                    )
+                    "اول محصول را باز کنید، بعد ساخت کاتالوگ را بزنید."
                     if (lang or "").startswith("fa")
-                    else f"❌ Catalog update failed.\nCause: {cause}",
-                    reply_markup=ak.catalog_wizard_keyboard(
-                        lang, sources=sess.get("catalog_sources") or {}
-                    ),
+                    else "Open a product first, then tap Build Catalog.",
+                    reply_markup=await _settings_kb(lang, bot_settings),
                 )
                 return
-            # After successful build: re-index media metadata for Ask AI.
-            from src.knowledge.catalog_media_ingest import (
-                IngestResult,
-                reindex_product_media_with_ai,
+            raw = load_product_raw(settings.knowledge_root, pid) or {}
+            photos = count_product_photos(
+                settings.knowledge_root,
+                settings.project_root,
+                pid,
+                staging=staging if staging.is_dir() else None,
             )
+            notes = _load_enrich_notes(staging)
+            sess["mode"] = "catalog_run_confirm"
+            sess["catalog_staging"] = str(staging)
+            await bot_settings.set_session(uid, sess)
 
-            try:
-                idx = await reindex_product_media_with_ai(
-                    knowledge_root=settings.knowledge_root,
-                    project_root=settings.project_root,
-                    product_id=pid,
-                    ai=ai,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("catalog media reindex failed: %s", exc)
-                idx = IngestResult(
-                    ok=False,
-                    product_id=pid,
-                    files_added=[],
-                    message_fa=(
-                        "ساخت کاتالوگ OK بود؛ ایندکس تصاویر ناموفق. "
-                        f"علت: {exc}"
-                    ),
-                    message_en=f"Catalog built; media reindex failed: {exc}",
-                    detail=str(exc),
-                )
-            done = ak.msg("catalog_done", lang).format(ids=pid)
-            if (lang or "").startswith("fa"):
-                done += "\n\nروند آپدیت کاتالوگ با موفقیت انجام شد."
-                done += f"\n{idx.message_fa}"
-            else:
-                done += "\n\nCatalog update completed successfully."
-                done += f"\n{idx.message_en}"
+            def _shown(key: str) -> str:
+                rec = _source_record(raw, key)
+                if rec.get("use") and rec.get("value"):
+                    return str(rec["value"])
+                return "—"
+
             await message.answer(
-                done,
-                reply_markup=await _settings_kb(lang, bot_settings),
-            )
-            # Keep product context; clear only wizard staging fields.
-            await bot_settings.set_session(
-                uid,
-                {
-                    "mode": "product_detail",
-                    "product_id": str(sess.get("product_id") or pid),
-                },
+                ak.msg("catalog_confirm_preview", lang).format(
+                    photo_count=photos,
+                    site=_shown("site"),
+                    channel=_shown("channel"),
+                    group=_shown("group"),
+                    notes=len(notes),
+                ),
+                reply_markup=ak.catalog_wizard_keyboard(lang, sources=_source_marks(raw)),
             )
             return
 
@@ -1330,96 +1523,41 @@ def setup_admin_settings_router(
             )
             return
 
-        if sess.get("mode") != "catalog_wizard":
-            # Allow photo uploads during bot_config_chat for vision context.
-            if sess.get("mode") == "bot_config_chat" and message.photo and message.bot:
-                staging = settings.data_dir / "config_chat_images" / str(uid)
-                staging.mkdir(parents=True, exist_ok=True)
-                photo = message.photo[-1]
-                dest = staging / f"photo_{photo.file_unique_id}.jpg"
-                try:
-                    await message.bot.download(photo, destination=dest)
-                except Exception as exc:  # noqa: BLE001
-                    await message.answer(f"❌ upload failed: {exc}")
-                    return
-                imgs = list(sess.get("config_chat_images") or [])
-                imgs.append(str(dest))
-                sess["config_chat_images"] = imgs[-8:]
-                await bot_settings.set_session(uid, sess)
-                await message.answer(
-                    "✅ عکس ذخیره شد. در پیام بعدی بگویید با این عکس چه کاری انجام شود."
-                    if lang.startswith("fa")
-                    else "✅ Photo saved. In your next message say what to do with it.",
-                    reply_markup=ak.cancel_keyboard(lang),
-                )
-                return
-            # Product detail: upload photos/docs → catalog media folder + auto index.
-            if (
-                sess.get("mode") == "product_detail"
-                and message.bot
-                and (message.photo or message.document)
-            ):
-                from src.knowledge.catalog_media_ingest import ingest_files_to_product_catalog
+        if sess.get("mode") == "product_detail" and (message.photo or message.document):
+            await message.answer(
+                "برای ارسال عکس و متن از کلید «تکمیل اطلاعات کاتالوگ» استفاده کنید."
+                if lang.startswith("fa")
+                else "Use Complete catalog info to send photos and text.",
+                reply_markup=ak.product_detail_keyboard(lang),
+            )
+            return
 
-                pid = str(sess.get("product_id") or "").strip()
-                staging = _staging_dir(settings, uid)
-                staging.mkdir(parents=True, exist_ok=True)
-                saved: list = []
-                try:
-                    if message.document:
-                        dest = staging / (
-                            message.document.file_name or f"file_{message.document.file_id}"
-                        )
-                        await message.bot.download(message.document, destination=dest)
-                        saved.append(dest)
-                    else:
-                        photo = message.photo[-1]
-                        dest = staging / f"photo_{photo.file_unique_id}.jpg"
-                        await message.bot.download(photo, destination=dest)
-                        saved.append(dest)
-                except Exception as exc:  # noqa: BLE001
-                    await message.answer(
-                        (
-                            f"❌ دریافت فایل ناموفق بود.\nعلت: {exc}\n"
-                            "راه‌حل: دوباره همان فایل را بفرستید یا فرمت تصویر/سند را عوض کنید."
-                        )
-                        if lang.startswith("fa")
-                        else f"❌ Download failed: {exc}",
-                        reply_markup=ak.product_detail_keyboard(lang),
-                    )
-                    return
-                await message.answer(
-                    "در حال آپدیت منابع کاتالوگ…"
-                    if lang.startswith("fa")
-                    else "Updating catalog sources…",
-                    reply_markup=ak.product_detail_keyboard(lang),
-                )
-                result = await ingest_files_to_product_catalog(
-                    knowledge_root=settings.knowledge_root,
-                    project_root=settings.project_root,
-                    product_id=pid,
-                    source_files=saved,
-                    ai=ai,
-                )
-                body = result.message_fa if lang.startswith("fa") else result.message_en
-                if not result.ok:
-                    body += (
-                        f"\n\nعلت: {result.detail or '—'}\n"
-                        "راه‌حل: محصول درست را باز کنید، فایل تصویر PNG/JPG بفرستید، "
-                        "و اگر JSON کاتالوگ خراب است یک‌بار Build Catalog را بزنید."
-                        if lang.startswith("fa")
-                        else f"\n\nCause: {result.detail or '—'}\n"
-                        "Fix: open the correct product, send PNG/JPG, or run Build Catalog."
-                    )
-                await audit.write(
-                    "catalog_media_ingest",
-                    admin_id=uid,
-                    detail=f"{pid}:{len(result.files_added)}:{result.ok}",
-                )
-                await message.answer(body, reply_markup=ak.product_detail_keyboard(lang))
+        if sess.get("mode") == "bot_config_chat" and message.photo and message.bot:
+            staging = settings.data_dir / "config_chat_images" / str(uid)
+            staging.mkdir(parents=True, exist_ok=True)
+            photo = message.photo[-1]
+            dest = staging / f"photo_{photo.file_unique_id}.jpg"
+            try:
+                await message.bot.download(photo, destination=dest)
+            except Exception as exc:  # noqa: BLE001
+                await message.answer(f"❌ upload failed: {exc}")
                 return
+            imgs = list(sess.get("config_chat_images") or [])
+            imgs.append(str(dest))
+            sess["config_chat_images"] = imgs[-8:]
+            await bot_settings.set_session(uid, sess)
+            await message.answer(
+                "✅ عکس ذخیره شد. در پیام بعدی بگویید با این عکس چه کاری انجام شود."
+                if lang.startswith("fa")
+                else "✅ Photo saved. In your next message say what to do with it.",
+                reply_markup=ak.cancel_keyboard(lang),
+            )
+            return
+
+        if sess.get("mode") not in {"catalog_wizard", "catalog_enrich"}:
             raise SkipHandler()
-        staging = Path(str(sess.get("catalog_staging") or _staging_dir(settings, uid)))
+        pid = str(sess.get("product_id") or "").strip()
+        staging = Path(str(sess.get("catalog_staging") or _staging_dir(settings, uid, pid)))
         staging.mkdir(parents=True, exist_ok=True)
         try:
             if message.document:
@@ -1434,13 +1572,13 @@ def setup_admin_settings_router(
         except Exception as exc:  # noqa: BLE001
             await message.answer(f"❌ upload failed: {exc}")
             return
+        raw = load_product_raw(settings.knowledge_root, pid) or {}
+        sess["mode"] = "catalog_enrich_note"
+        sess["pending_enrich"] = {"kind": "photo", "path": str(dest)}
+        await bot_settings.set_session(uid, sess)
         await message.answer(
-            ("✅ فایل دریافت شد." if lang == "fa" else "✅ File received.")
-            + "\n"
-            + ak.msg("catalog_ask_path", lang),
-            reply_markup=ak.catalog_wizard_keyboard(
-                lang, sources=sess.get("catalog_sources") or {}
-            ),
+            ak.msg("catalog_enrich_ask_note", lang),
+            reply_markup=ak.catalog_wizard_keyboard(lang, sources=_source_marks(raw)),
         )
 
     @router.message(
@@ -1471,10 +1609,17 @@ def setup_admin_settings_router(
             "scoped_rules_ai",
             "bot_config_chat",
             "catalog_wizard",
+            "catalog_enrich",
+            "catalog_enrich_note",
+            "catalog_source_wait",
+            "catalog_source_confirm",
+            "catalog_run_confirm",
             "products_add_title",
             "products_add_emoji",
             "products_add_summary",
             "products_edit",
+            "products_ai_training",
+            "product_ai_chat",
         }:
             raise SkipHandler()
 
@@ -1550,6 +1695,78 @@ def setup_admin_settings_router(
             await _show_product_detail(message, settings, lang, pid)
             return
 
+        if mode == "products_ai_training":
+            pid = str(sess.get("product_id") or "").strip()
+            if not pid:
+                await bot_settings.set_session(uid, {"mode": "products_hub"})
+                await _show_products_hub(message, settings, lang)
+                return
+            raw = load_product_raw(settings.knowledge_root, pid) or {}
+            raw["ai_training_text"] = text
+            save_product_raw(settings.knowledge_root, pid, raw)
+            await audit.write("product_ai_training", admin_id=uid, detail=pid)
+            back_wizard = bool(sess.get("from_catalog_wizard"))
+            await bot_settings.set_session(
+                uid,
+                {
+                    "mode": "catalog_wizard" if back_wizard else "product_detail",
+                    "product_id": pid,
+                    "catalog_staging": str(_staging_dir(settings, uid, pid)),
+                    "product_hint": pid,
+                },
+            )
+            await message.answer(ak.msg("saved_ok", lang))
+            if back_wizard:
+                await _show_catalog_wizard(message, bot_settings, uid, lang, settings=settings)
+            else:
+                await _show_product_detail(message, settings, lang, pid)
+            return
+
+        if mode == "product_ai_chat":
+            pid = str(sess.get("product_id") or "").strip()
+            if not pid or ai is None:
+                await _show_product_detail(message, settings, lang, pid or "")
+                return
+            catalog = ai_products_snippet(text, lang=lang or "fa", product_id=pid)
+            try:
+                reply = await ai.chat(
+                    [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are receiving operator teaching for ONE product. "
+                                "Reply in the operator language. Confirm what you learned in 4-8 lines. "
+                                "Do not change other products.\n\n"
+                                + catalog
+                            ),
+                        },
+                        {"role": "user", "content": text},
+                    ]
+                )
+            except Exception as exc:  # noqa: BLE001
+                await message.answer(f"❌ {exc}", reply_markup=ak.product_detail_keyboard(lang))
+                return
+            raw = load_product_raw(settings.knowledge_root, pid) or {}
+            prev = str(raw.get("ai_training_text") or "").strip()
+            chunk = text.strip()
+            raw["ai_training_text"] = (prev + "\n\n" + chunk).strip() if prev else chunk
+            mats = raw.get("operator_materials")
+            if not isinstance(mats, list):
+                mats = []
+            mats.append({"text": chunk, "ai_guide": "operator product chat"})
+            raw["operator_materials"] = mats[-40:]
+            save_product_raw(settings.knowledge_root, pid, raw)
+            notify_knowledge_changed()
+            await audit.write("product_ai_chat", admin_id=uid, detail=pid)
+            await bot_settings.set_session(
+                uid, {"mode": "product_ai_chat", "product_id": pid}
+            )
+            await message.answer(
+                (reply or ak.msg("saved_ok", lang))[:3900],
+                reply_markup=ak.product_detail_keyboard(lang),
+            )
+            return
+
         if mode == "edit_health":
             field = str(sess.get("health_field") or "")
             if field == "times":
@@ -1599,17 +1816,148 @@ def setup_admin_settings_router(
             await message.answer(await _admins_card(lang), reply_markup=ak.admins_keyboard(lang))
             return
 
-        if mode == "catalog_wizard":
-            # Treat as folder path on the bot host
-            sess["catalog_path"] = text
+        if mode == "catalog_source_wait":
+            pid = str(sess.get("product_id") or "").strip()
+            raw = load_product_raw(settings.knowledge_root, pid) or {}
+            sess["mode"] = "catalog_source_confirm"
+            sess["catalog_source_pending"] = text
             await bot_settings.set_session(uid, sess)
             await message.answer(
-                ("✅ مسیر ذخیره شد." if lang == "fa" else "✅ Path saved.")
-                + "\n"
-                + _fmt_current(lang, text),
-                reply_markup=ak.catalog_wizard_keyboard(
-                    lang, sources=sess.get("catalog_sources") or {}
-                ),
+                _fmt_current(lang, text) + "\n\n" + ak.msg("catalog_ask_confirm", lang),
+                reply_markup=ak.catalog_wizard_keyboard(lang, sources=_source_marks(raw)),
+            )
+            return
+
+        if mode == "catalog_source_confirm":
+            pid = str(sess.get("product_id") or "").strip()
+            key = str(sess.get("catalog_source_key") or "")
+            pending = str(sess.get("catalog_source_pending") or "").strip()
+            raw = load_product_raw(settings.knowledge_root, pid) or {}
+            sources = raw.get("catalog_sources") if isinstance(raw.get("catalog_sources"), dict) else {}
+            if _is_yes(text) and key:
+                sources[key] = {"value": pending, "use": True}
+                raw["catalog_sources"] = sources
+                save_product_raw(settings.knowledge_root, pid, raw)
+                await message.answer(ak.msg("saved_ok", lang))
+            elif _is_no(text):
+                await message.answer(ak.msg("catalog_declined", lang))
+            else:
+                await message.answer(ak.msg("catalog_ask_confirm", lang))
+                return
+            sess["mode"] = "catalog_wizard"
+            sess.pop("catalog_source_pending", None)
+            sess.pop("catalog_source_key", None)
+            await bot_settings.set_session(uid, sess)
+            await _show_catalog_wizard(message, bot_settings, uid, lang, settings=settings)
+            return
+
+        if mode == "catalog_run_confirm":
+            if _is_no(text):
+                sess["mode"] = "catalog_wizard"
+                await bot_settings.set_session(uid, sess)
+                await message.answer(ak.msg("catalog_declined", lang))
+                await _show_catalog_wizard(message, bot_settings, uid, lang, settings=settings)
+                return
+            if not _is_yes(text):
+                await message.answer(ak.msg("catalog_ask_confirm", lang))
+                return
+            if ai is None:
+                await message.answer("AI unavailable.")
+                return
+            await _execute_catalog_build(
+                message=message,
+                settings=settings,
+                bot_settings=bot_settings,
+                uid=uid,
+                lang=lang,
+                sess=sess,
+                ai=ai,
+            )
+            return
+
+        if mode == "catalog_enrich":
+            pid = str(sess.get("product_id") or "").strip()
+            raw = load_product_raw(settings.knowledge_root, pid) or {}
+            staging = Path(str(sess.get("catalog_staging") or _staging_dir(settings, uid)))
+            staging.mkdir(parents=True, exist_ok=True)
+            sess["mode"] = "catalog_enrich_note"
+            sess["pending_enrich"] = {"kind": "text", "text": text}
+            await bot_settings.set_session(uid, sess)
+            await message.answer(
+                ak.msg("catalog_enrich_ask_note", lang),
+                reply_markup=ak.catalog_wizard_keyboard(lang, sources=_source_marks(raw)),
+            )
+            return
+
+        if mode == "catalog_enrich_note":
+            pid = str(sess.get("product_id") or "").strip()
+            raw = load_product_raw(settings.knowledge_root, pid) or {}
+            staging = _staging_dir(settings, uid, pid)
+            pending = dict(sess.get("pending_enrich") or {})
+            pending["ai_note"] = text
+            notes = _load_enrich_notes(staging)
+            notes.append(pending)
+            _save_enrich_notes(staging, notes)
+            if pending.get("kind") == "photo" and pending.get("path"):
+                from src.knowledge.catalog_media_ingest import ingest_files_to_product_catalog
+
+                src = Path(str(pending["path"]))
+                await message.answer(
+                    "در حال تحلیل عکس این محصول…"
+                    if (lang or "").startswith("fa")
+                    else "Analyzing this product photo…",
+                )
+                result = await ingest_files_to_product_catalog(
+                    knowledge_root=settings.knowledge_root,
+                    project_root=settings.project_root,
+                    product_id=pid,
+                    source_files=[src] if src.is_file() else [],
+                    ai=ai,
+                    ai_guides={src.name.lower(): text},
+                )
+                body = result.message_fa if (lang or "").startswith("fa") else result.message_en
+            else:
+                mats = raw.get("operator_materials")
+                if not isinstance(mats, list):
+                    mats = []
+                mats.append(
+                    {
+                        "text": str(pending.get("text") or "").strip(),
+                        "ai_guide": text,
+                    }
+                )
+                raw["operator_materials"] = mats[-40:]
+                save_product_raw(settings.knowledge_root, pid, raw)
+                body = ak.msg("saved_ok", lang)
+            notify_knowledge_changed()
+            sess["mode"] = "catalog_wizard"
+            sess.pop("pending_enrich", None)
+            sess["catalog_staging"] = str(staging)
+            await bot_settings.set_session(uid, sess)
+            await message.answer(body[:3900], reply_markup=ak.catalog_wizard_keyboard(lang, sources=_source_marks(load_product_raw(settings.knowledge_root, pid))))
+            await _show_catalog_wizard(message, bot_settings, uid, lang, settings=settings)
+            return
+
+        if mode == "catalog_wizard":
+            pid = str(sess.get("product_id") or "").strip()
+            raw = load_product_raw(settings.knowledge_root, pid) or {}
+            looks_path = ("/" in text or "\\" in text) and not text.startswith(("http://", "https://"))
+            if looks_path:
+                sess["catalog_path"] = text
+                await bot_settings.set_session(uid, sess)
+                await message.answer(
+                    ("✅ مسیر ذخیره شد." if lang == "fa" else "✅ Path saved.")
+                    + "\n"
+                    + _fmt_current(lang, text),
+                    reply_markup=ak.catalog_wizard_keyboard(lang, sources=_source_marks(raw)),
+                )
+                return
+            sess["mode"] = "catalog_enrich_note"
+            sess["pending_enrich"] = {"kind": "text", "text": text}
+            await bot_settings.set_session(uid, sess)
+            await message.answer(
+                ak.msg("catalog_enrich_ask_note", lang),
+                reply_markup=ak.catalog_wizard_keyboard(lang, sources=_source_marks(raw)),
             )
             return
 

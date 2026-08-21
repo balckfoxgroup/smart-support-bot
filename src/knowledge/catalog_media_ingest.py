@@ -135,6 +135,7 @@ async def ingest_files_to_product_catalog(
     product_id: str,
     source_files: list[Path],
     ai: Any | None = None,
+    ai_guides: dict[str, str] | None = None,
 ) -> IngestResult:
     """Copy uploads into media/catalogs/<product_id>, update JSON, reload cache."""
     pid = (product_id or "").strip()
@@ -224,6 +225,10 @@ async def ingest_files_to_product_catalog(
                 dest.name, product_id=pid, index=len(media_list)
             )
             entry["path"] = rel
+            guide = (ai_guides or {}).get(src.name.lower()) or (ai_guides or {}).get(dest.name.lower())
+            if guide:
+                entry["ai_guide"] = guide
+                entry["note"] = guide
             try:
                 tagged = await _ai_tag_image(
                     ai=ai,
@@ -234,6 +239,10 @@ async def ingest_files_to_product_catalog(
                 )
                 entry = _merge_ai_tag(entry, tagged)
                 entry["path"] = rel
+                if guide:
+                    entry["ai_guide"] = guide
+                    if not str(entry.get("note") or "").strip():
+                        entry["note"] = guide
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"tag:{dest.name}:{type(exc).__name__}")
             media_list.append(entry)
@@ -259,6 +268,9 @@ async def ingest_files_to_product_catalog(
             json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
         load_product_catalogs(knowledge_root)
+        from src.knowledge.refresh import notify_knowledge_changed
+
+        notify_knowledge_changed()
     except Exception as exc:  # noqa: BLE001
         return IngestResult(
             ok=False,
@@ -368,6 +380,9 @@ async def reindex_product_media_with_ai(
         json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     load_product_catalogs(knowledge_root)
+    from src.knowledge.refresh import notify_knowledge_changed
+
+    notify_knowledge_changed()
     return IngestResult(
         ok=True,
         product_id=product_id,

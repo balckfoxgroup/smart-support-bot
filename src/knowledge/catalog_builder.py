@@ -200,6 +200,8 @@ async def build_one_catalog(
     project_root: Path,
     extra_sources: str = "",
     reload_fn=None,
+    force_product_id: str = "",
+    enrich_notes: list[dict[str, Any]] | None = None,
 ) -> str:
     inbox = catalog_inbox_dir(knowledge_root)
     out_dir = product_catalogs_dir(knowledge_root)
@@ -212,7 +214,7 @@ async def build_one_catalog(
     has_media = any(
         p.is_file() and p.suffix.lower() in IMAGE_EXTS for p in folder.rglob("*")
     )
-    if len(payload) < 40 and not has_media:
+    if len(payload) < 40 and not has_media and not force_product_id:
         raise ValueError(f"Folder too empty: {folder}")
 
     # Prefer vision when screenshots exist and ai_chat supports it.
@@ -252,7 +254,19 @@ async def build_one_catalog(
     if not data:
         raise ValueError("AI did not return valid catalog JSON")
 
-    product_id = str(data.get("product_id") or folder.name).strip().lower().replace(" ", "-")
+    existing: dict[str, Any] = {}
+    if force_product_id:
+        existing_path = out_dir / f"{force_product_id}.json"
+        if existing_path.is_file():
+            try:
+                loaded = json.loads(existing_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    existing = loaded
+            except (OSError, json.JSONDecodeError):
+                existing = {}
+        product_id = force_product_id.strip().lower().replace(" ", "-")
+    else:
+        product_id = str(data.get("product_id") or folder.name).strip().lower().replace(" ", "-")
     data["product_id"] = product_id
     data.setdefault("enabled", True)
     data.setdefault("catalog_id", f"user-{product_id}")
@@ -298,6 +312,44 @@ async def build_one_catalog(
             ],
         )
 
+    notes = [n for n in (enrich_notes or []) if isinstance(n, dict)]
+    notes_by_file = {
+        Path(str(n.get("path") or "")).name.lower(): str(n.get("ai_note") or "").strip()
+        for n in notes
+        if Path(str(n.get("path") or "")).name
+    }
+    media_list = data.get("media") if isinstance(data.get("media"), list) else []
+    for entry in media_list:
+        if not isinstance(entry, dict):
+            continue
+        name = Path(str(entry.get("path") or "")).name.lower()
+        guide = notes_by_file.get(name, "")
+        if guide:
+            entry["ai_guide"] = guide
+            if not str(entry.get("note") or "").strip():
+                entry["note"] = guide
+    text_mats = [
+        {"text": str(n.get("text") or "").strip(), "ai_guide": str(n.get("ai_note") or "").strip()}
+        for n in notes
+        if str(n.get("kind") or "") == "text" and str(n.get("text") or "").strip()
+    ]
+    if existing.get("operator_materials") and not text_mats:
+        data["operator_materials"] = existing.get("operator_materials")
+    elif text_mats:
+        data["operator_materials"] = text_mats
+    if isinstance(existing.get("ai_training_text"), str):
+        data["ai_training_text"] = existing["ai_training_text"]
+    if isinstance(existing.get("catalog_sources"), dict):
+        data["catalog_sources"] = existing["catalog_sources"]
+    if existing:
+        data["enabled"] = bool(existing.get("enabled", True))
+        if existing.get("menu_order") is not None:
+            data["menu_order"] = existing.get("menu_order")
+        if existing.get("menu_emoji"):
+            data["menu_emoji"] = existing.get("menu_emoji")
+        if isinstance(existing.get("title"), dict) and existing.get("title"):
+            data["title"] = existing["title"]
+
     path = out_dir / f"{product_id}.json"
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     # Keep a copy inside the inbox folder too
@@ -306,6 +358,10 @@ async def build_one_catalog(
     )
     if reload_fn is not None:
         reload_fn()
+    else:
+        from src.knowledge.refresh import notify_knowledge_changed
+
+        notify_knowledge_changed()
     logger.info("Wrote catalog %s (+ %s media)", path, len(media_paths))
     return product_id
 
