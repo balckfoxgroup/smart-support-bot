@@ -613,6 +613,38 @@ async def _show_catalog_wizard(
     )
 
 
+async def _show_training_hub(
+    message: Message,
+    *,
+    settings: Settings,
+    bot_settings: BotSettingsStore,
+    uid: int,
+    lang: str,
+    pid: str,
+    from_wizard: bool,
+) -> None:
+    from src.knowledge.ai_memory import catalog_teaching_text
+
+    saved = catalog_teaching_text(settings.knowledge_root, pid)
+    if not saved:
+        raw = load_product_raw(settings.knowledge_root, pid) or {}
+        saved = str(raw.get("ai_training_text") or "").strip()
+    await bot_settings.set_session(
+        uid,
+        {
+            "mode": "products_ai_training_hub",
+            "product_id": pid,
+            "from_catalog_wizard": from_wizard,
+            "catalog_staging": str(_staging_dir(settings, uid, pid)),
+            "product_hint": pid,
+        },
+    )
+    await message.answer(
+        ak.msg("products_training_hub", lang).format(saved=saved or "—"),
+        reply_markup=ak.training_hub_keyboard(lang),
+    )
+
+
 def setup_admin_settings_router(
     users: UserStore,
     *,
@@ -710,6 +742,8 @@ def setup_admin_settings_router(
         | ak.texts("products_build_catalog")
         | ak.texts("products_catalog_enrich")
         | ak.texts("products_ai_training")
+        | ak.texts("products_ai_training_edit")
+        | ak.texts("products_ai_training_delete")
         | ak.texts("products_product_chat")
         | ak.texts("products_product_chat_legacy")
         | ak.texts("products_back")
@@ -1034,6 +1068,7 @@ def setup_admin_settings_router(
                 "products_add_summary",
                 "products_edit",
                 "products_ai_training",
+                "products_ai_training_hub",
                 "product_ai_chat",
                 "catalog_enrich",
                 "catalog_enrich_note",
@@ -1100,8 +1135,71 @@ def setup_admin_settings_router(
             return
 
         if action == "products_back":
+            sess = await bot_settings.get_session(uid)
+            mode_now = str(sess.get("mode") or "")
+            pid_now = str(sess.get("product_id") or "").strip()
+            if mode_now in {
+                "products_ai_training_hub",
+                "products_ai_training",
+            } and pid_now and sess.get("from_catalog_wizard"):
+                sess["mode"] = "catalog_wizard"
+                await bot_settings.set_session(uid, sess)
+                await _show_catalog_wizard(
+                    message, bot_settings, uid, lang, settings=settings
+                )
+                return
             await bot_settings.set_session(uid, {"mode": "products_hub"})
             await _show_products_hub(message, settings, lang)
+            return
+
+        if action in {"products_ai_training_edit", "products_ai_training_delete"}:
+            sess = await bot_settings.get_session(uid)
+            pid = str(sess.get("product_id") or "").strip()
+            from_wizard = bool(sess.get("from_catalog_wizard"))
+            if not pid:
+                await bot_settings.set_session(uid, {"mode": "products_hub"})
+                await _show_products_hub(message, settings, lang)
+                return
+            if action == "products_ai_training_delete":
+                raw = load_product_raw(settings.knowledge_root, pid) or {}
+                raw["ai_training_text"] = ""
+                save_product_raw(settings.knowledge_root, pid, raw)
+                from src.knowledge.ai_memory import set_catalog_teaching
+
+                set_catalog_teaching(settings.knowledge_root, pid, "")
+                notify_knowledge_changed()
+                await audit.write("product_ai_training_delete", admin_id=uid, detail=pid)
+                await message.answer(ak.msg("products_training_cleared", lang))
+                await _show_training_hub(
+                    message,
+                    settings=settings,
+                    bot_settings=bot_settings,
+                    uid=uid,
+                    lang=lang,
+                    pid=pid,
+                    from_wizard=from_wizard,
+                )
+                return
+            from src.knowledge.ai_memory import catalog_teaching_text
+
+            saved = catalog_teaching_text(settings.knowledge_root, pid)
+            if not saved:
+                raw = load_product_raw(settings.knowledge_root, pid) or {}
+                saved = str(raw.get("ai_training_text") or "").strip()
+            await bot_settings.set_session(
+                uid,
+                {
+                    "mode": "products_ai_training",
+                    "product_id": pid,
+                    "from_catalog_wizard": from_wizard,
+                    "catalog_staging": str(_staging_dir(settings, uid, pid)),
+                    "product_hint": pid,
+                },
+            )
+            await message.answer(
+                ak.msg("products_ask_training", lang).format(saved=saved or "—"),
+                reply_markup=ak.training_hub_keyboard(lang),
+            )
             return
 
         if action == "products_add":
@@ -1163,20 +1261,14 @@ def setup_admin_settings_router(
                 )
                 return
             if action == "products_ai_training":
-                raw = load_product_raw(settings.knowledge_root, pid) or {}
-                saved = str(raw.get("ai_training_text") or "").strip() or "—"
-                await bot_settings.set_session(
-                    uid,
-                    {
-                        "mode": "products_ai_training",
-                        "product_id": pid,
-                        "from_catalog_wizard": True,
-                        "catalog_staging": str(_staging_dir(settings, uid, pid)),
-                    },
-                )
-                await message.answer(
-                    ak.msg("products_ask_training", lang).format(saved=saved),
-                    reply_markup=ak.cancel_keyboard(lang),
+                await _show_training_hub(
+                    message,
+                    settings=settings,
+                    bot_settings=bot_settings,
+                    uid=uid,
+                    lang=lang,
+                    pid=pid,
+                    from_wizard=True,
                 )
                 return
             if action in {"products_build_catalog", "products_catalog_enrich"}:
@@ -1663,6 +1755,7 @@ def setup_admin_settings_router(
             "products_add_summary",
             "products_edit",
             "products_ai_training",
+            "products_ai_training_hub",
             "product_ai_chat",
         }:
             raise SkipHandler()
@@ -1739,6 +1832,15 @@ def setup_admin_settings_router(
             await _show_product_detail(message, settings, lang, pid)
             return
 
+        if mode == "products_ai_training_hub":
+            await message.answer(
+                "برای تغییر متن آموزشی کاتالوگ، «ویرایش متن آموزشی» را بزنید."
+                if (lang or "").startswith("fa")
+                else "Tap Edit training text to change the catalog teaching.",
+                reply_markup=ak.training_hub_keyboard(lang),
+            )
+            return
+
         if mode == "products_ai_training":
             pid = str(sess.get("product_id") or "").strip()
             if not pid:
@@ -1748,9 +1850,9 @@ def setup_admin_settings_router(
             raw = load_product_raw(settings.knowledge_root, pid) or {}
             raw["ai_training_text"] = text
             save_product_raw(settings.knowledge_root, pid, raw)
-            from src.knowledge.ai_memory import append_operator_teaching
+            from src.knowledge.ai_memory import set_catalog_teaching
 
-            append_operator_teaching(settings.knowledge_root, pid, text)
+            set_catalog_teaching(settings.knowledge_root, pid, text)
             notify_knowledge_changed()
             await audit.write("product_ai_training", admin_id=uid, detail=pid)
             back_wizard = bool(sess.get("from_catalog_wizard"))
@@ -1764,10 +1866,15 @@ def setup_admin_settings_router(
                 },
             )
             await message.answer(ak.msg("saved_ok", lang))
-            if back_wizard:
-                await _show_catalog_wizard(message, bot_settings, uid, lang, settings=settings)
-            else:
-                await _show_product_detail(message, settings, lang, pid)
+            await _show_training_hub(
+                message,
+                settings=settings,
+                bot_settings=bot_settings,
+                uid=uid,
+                lang=lang,
+                pid=pid,
+                from_wizard=back_wizard,
+            )
             return
 
         if mode == "product_ai_chat":
@@ -1795,9 +1902,7 @@ def setup_admin_settings_router(
                 await message.answer(f"❌ {exc}", reply_markup=ak.product_detail_keyboard(lang))
                 return
             raw = load_product_raw(settings.knowledge_root, pid) or {}
-            prev = str(raw.get("ai_training_text") or "").strip()
             chunk = text.strip()
-            raw["ai_training_text"] = (prev + "\n\n" + chunk).strip() if prev else chunk
             mats = raw.get("operator_materials")
             if not isinstance(mats, list):
                 mats = []

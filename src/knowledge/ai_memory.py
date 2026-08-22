@@ -15,6 +15,8 @@ _FACT_MARK = "<!-- BEGIN FACTS -->"
 _FACT_END = "<!-- END FACTS -->"
 _LEARN_MARK = "<!-- BEGIN LEARNED -->"
 _LEARN_END = "<!-- END LEARNED -->"
+_CAT_MARK = "<!-- BEGIN CATALOG -->"
+_CAT_END = "<!-- END CATALOG -->"
 
 _BEHAVIOR_HINTS = (
     "ایموجی",
@@ -43,6 +45,7 @@ _BEHAVIOR_HINTS = (
 class AIMemory:
     behavior: list[str] = field(default_factory=list)
     facts: list[str] = field(default_factory=list)
+    catalog: str = ""
     learned: list[tuple[str, str]] = field(default_factory=list)
 
 
@@ -74,8 +77,10 @@ def load_ai_memory(knowledge_root: Path, product_id: str) -> AIMemory:
     beh = _split_marked(raw, _BEH_MARK, _BEH_END)
     facts = _split_marked(raw, _FACT_MARK, _FACT_END)
     learned = _split_marked(raw, _LEARN_MARK, _LEARN_END)
+    catalog = _split_marked(raw, _CAT_MARK, _CAT_END).strip()
     mem.behavior = [ln[2:].strip() for ln in beh.splitlines() if ln.strip().startswith("- ")]
     mem.facts = [ln[2:].strip() for ln in facts.splitlines() if ln.strip().startswith("- ")]
+    mem.catalog = "" if catalog in {"(none yet)", "- (none yet)"} else catalog
     q = ""
     a_lines: list[str] = []
     for line in learned.splitlines():
@@ -100,15 +105,19 @@ def render_ai_memory_md(product_id: str, mem: AIMemory) -> str:
     for q, a in mem.learned:
         learned_bits.append(f"### Q: {q}\nA: {a}")
     learned = "\n\n".join(learned_bits) if learned_bits else "(none yet)"
+    catalog = mem.catalog.strip() or "(none yet)"
     return (
         f"# AI memory for {product_id}\n\n"
         "This file survives agent/API changes. Ask AI must read it first.\n"
-        "Behavior rules override the default short/dry tone.\n"
-        "If a learned Q matches the user, use that answer. Else use Operator facts, then the catalog.\n\n"
+        "Behavior rules (from Chat with AI) override the default short/dry tone.\n"
+        "Catalog teaching is only about catalog photos/facts and how to teach users from the catalog.\n"
+        "If a learned Q matches the user, use that answer. Else use Operator facts, then catalog teaching, then the catalog.\n\n"
         "## Behavior rules\n"
         f"{_BEH_MARK}\n{beh}\n{_BEH_END}\n\n"
         "## Operator facts\n"
         f"{_FACT_MARK}\n{facts}\n{_FACT_END}\n\n"
+        "## Catalog teaching\n"
+        f"{_CAT_MARK}\n{catalog}\n{_CAT_END}\n\n"
         "## Learned user answers\n"
         f"{_LEARN_MARK}\n{learned}\n{_LEARN_END}\n"
     )
@@ -148,6 +157,18 @@ def append_operator_teaching(
     return decided
 
 
+def set_catalog_teaching(knowledge_root: Path, product_id: str, text: str) -> None:
+    """Replace catalog-only teaching (edit or clear)."""
+    mem = load_ai_memory(knowledge_root, product_id)
+    mem.catalog = (text or "").strip()
+    save_ai_memory(knowledge_root, product_id, mem)
+
+
+def catalog_teaching_text(knowledge_root: Path, product_id: str) -> str:
+    seed_memory_from_product(knowledge_root, product_id)
+    return load_ai_memory(knowledge_root, product_id).catalog.strip()
+
+
 def append_learned_answer(
     knowledge_root: Path,
     product_id: str,
@@ -171,7 +192,7 @@ def seed_memory_from_product(knowledge_root: Path, product_id: str) -> None:
     if not pid:
         return
     mem = load_ai_memory(knowledge_root, pid)
-    if mem.behavior or mem.facts or mem.learned:
+    if mem.catalog or mem.behavior or mem.facts or mem.learned:
         return
     try:
         from src.knowledge.product_catalogs import load_product_raw
@@ -179,11 +200,9 @@ def seed_memory_from_product(knowledge_root: Path, product_id: str) -> None:
         return
     raw = load_product_raw(knowledge_root, pid) or {}
     train = str(raw.get("ai_training_text") or "").strip()
-    if not train:
-        return
-    for part in re.split(r"\n{2,}", train):
-        if part.strip():
-            append_operator_teaching(knowledge_root, pid, part.strip())
+    if train:
+        mem.catalog = train
+        save_ai_memory(knowledge_root, pid, mem)
 
 
 def behavior_rules_text(knowledge_root: Path, product_id: str) -> str:
@@ -207,7 +226,9 @@ def memory_prompt_block(knowledge_root: Path, product_id: str, *, limit: int = 4
     header = (
         "### Operator AI memory (CHECK FIRST — before catalog)\n"
         "Follow Behavior rules for tone/format in every Ask AI reply.\n"
+        "Follow Behavior rules (Chat with AI) for tone/format.\n"
+        "Catalog teaching is only for catalog photos/facts and teaching users from the catalog.\n"
         "If Learned user answers contain this question, reuse that answer.\n"
-        "If not found here, use the product catalog next.\n\n"
+        "If not found here, use Catalog teaching, then the product catalog.\n\n"
     )
     return (header + raw)[:limit]

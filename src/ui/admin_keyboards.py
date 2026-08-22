@@ -211,6 +211,14 @@ _LABELS: dict[str, dict[Lang, str]] = {
         "fa": "ارسال متن آموزشی برای ai",
         "en": "Send AI training text",
     },
+    "products_ai_training_edit": {
+        "fa": "✏️ ویرایش متن آموزشی",
+        "en": "✏️ Edit training text",
+    },
+    "products_ai_training_delete": {
+        "fa": "🗑 حذف متن آموزشی",
+        "en": "🗑 Delete training text",
+    },
     "products_catalog_enrich": {
         "fa": "📝 تکمیل اطلاعات کاتالوگ",
         "en": "📝 Complete catalog info",
@@ -628,32 +636,31 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
         "fa": (
             "کاتالوگ همین محصول ({product})\n"
             "تعداد عکس در پوشهٔ این محصول: {photo_count}\n\n"
-            "عکس یا متن را همین‌جا بفرستید؛ برای متن آموزشی از کلید "
-            "«ارسال متن آموزشی برای ai» استفاده کنید.\n"
+            "عکس یا متن را همین‌جا بفرستید؛ برای آموزش کاتالوگ و نحوهٔ توضیح "
+            "کاتالوگ به کاربر از کلید «ارسال متن آموزشی برای ai» استفاده کنید.\n"
             "برای ثبت نهایی کاتالوگ «ساخت کاتالوگ» را بزنید."
         ),
         "en": (
             "Catalog for this product ({product})\n"
             "Photos in this product folder: {photo_count}\n\n"
-            "Send a photo or text here. Use Send AI training text for long teaching notes.\n"
+            "Send a photo or text here. Use Send AI training text only for catalog teaching.\n"
             "Tap Build Catalog when you want a full rebuild."
         ),
     },
     "products_product_chat_intro": {
         "fa": (
             "💬 گفتگو با AI — فقط دربارهٔ همین محصول.\n\n"
-            "از همین‌جا رفتار و دانش ایجنت را آموزش دهید: لحن، چندسطری بودن، "
-            "ایموجی، نکتهٔ فنی یا هر چیزی که Ask AI باید بداند.\n"
-            "متن اینجا و «ارسال متن آموزشی برای ai» در یک فایل حافظه ذخیره می‌شود "
-            "تا با عوض شدن ایجنت از بین نرود. Ask AI اول همان فایل را می‌خواند "
-            "و اگر جواب نبود سراغ کاتالوگ می‌رود."
+            "همان قابلیت قبلی اینجاست: نکته، آموزش محصول، و به‌روز کردن دانش همین محصول.\n"
+            "از همین‌جا می‌توانید رفتار پاسخ به کاربر را هم یاد بدهید "
+            "(چند خط، ایموجی، لحن). این‌ها در فایل حافظه می‌ماند و Ask AI از آن‌ها استفاده می‌کند.\n"
+            "آموزش مخصوص کاتالوگ را از کلید «ارسال متن آموزشی برای ai» بفرستید."
         ),
         "en": (
             "💬 Chat With AI — this product only.\n\n"
-            "Teach the agent here: tone, multi-line replies, emojis, or product facts "
-            "that Ask AI must follow.\n"
-            "This chat and Send AI training text share one memory file so a new agent "
-            "still sees it. Ask AI reads that file first, then the catalog."
+            "The previous capability is still here: product tips, teaching, and updating this product.\n"
+            "You can also teach reply behavior (multi-line, emojis, tone). That is stored "
+            "in the memory file and used by Ask AI.\n"
+            "Use Send AI training text only for catalog teaching."
         ),
     },
     "catalog_src_site": {
@@ -727,13 +734,31 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
     },
     "products_ask_training": {
         "fa": (
-            "متن آموزشی فعلی:\n{saved}\n\n"
-            "متن آموزشی جدید را بفرستید. AI با همین متن به سؤال کاربر جواب می‌دهد."
+            "فقط آموزش کاتالوگ و نحوهٔ توضیح کاتالوگ به کاربر.\n"
+            "متن فعلی:\n{saved}\n\n"
+            "متن جدید را بفرستید تا جایگزین شود. رفتار کلی ربات را اینجا ننویسید."
         ),
         "en": (
-            "Current training text:\n{saved}\n\n"
-            "Send the new training text. The AI will answer users from this text."
+            "Catalog teaching only — how the AI should explain this catalog to users.\n"
+            "Current text:\n{saved}\n\n"
+            "Send the new text to replace it. Do not put general bot behavior here."
         ),
+    },
+    "products_training_hub": {
+        "fa": (
+            "متن آموزشی کاتالوگ — فقط دربارهٔ کاتالوگ و آموزش کاربر از روی کاتالوگ.\n\n"
+            "متن فعلی:\n{saved}\n\n"
+            "ویرایش یا حذف را از کلیدها بزنید."
+        ),
+        "en": (
+            "Catalog training text — catalog and how to teach users from it only.\n\n"
+            "Current text:\n{saved}\n\n"
+            "Use Edit or Delete below."
+        ),
+    },
+    "products_training_cleared": {
+        "fa": "متن آموزشی کاتالوگ حذف شد.",
+        "en": "Catalog training text was deleted.",
     },
     "catalog_src_toggled": {
         "fa": "منبع‌ها: سایت={site} | کانال={channel} | گروه={group}",
@@ -1275,6 +1300,20 @@ def product_detail_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
         ],
         lang,
     )
+    return ReplyKeyboardMarkup(
+        keyboard=_chunk_rows(buttons),
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def training_hub_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    buttons = [
+        KeyboardButton(text=label("products_ai_training_edit", lang)),
+        KeyboardButton(text=label("products_ai_training_delete", lang)),
+        KeyboardButton(text=label("products_back", lang)),
+        KeyboardButton(text=label("settings_back", lang)),
+    ]
     return ReplyKeyboardMarkup(
         keyboard=_chunk_rows(buttons),
         resize_keyboard=True,
