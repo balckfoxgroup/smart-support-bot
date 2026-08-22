@@ -100,11 +100,19 @@ _NO_MEDIA_HINTS = (
 )
 
 
+def wants_send_media(query: str) -> bool:
+    from src.knowledge.catalog_index import wants_send_media as _wants_send
+
+    return _wants_send(query)
+
+
 def wants_catalog_media(query: str) -> bool:
     """True when the question likely benefits from a product UI screenshot."""
     q = _norm(query)
     if not q:
         return False
+    if wants_send_media(query):
+        return True
     if any(h in q for h in _NO_MEDIA_HINTS):
         return False
     ui_hints = (
@@ -375,10 +383,13 @@ def retrieve_catalog_context(
     limit_media: int = 2,
     min_score: float = 4.5,
     product_id: str | None = None,
+    prior_text: str = "",
 ) -> CatalogRetrieval:
     """Retrieve related catalog sections + only relevant images for a user question."""
-    expanded = expand_query(query)
-    educational = is_educational_question(query)
+    search_query = f"{prior_text} {query}".strip() if (prior_text or "").strip() else query
+    expanded = expand_query(search_query)
+    educational = is_educational_question(query) or is_educational_question(search_query)
+    send_now = wants_send_media(query)
     units = build_catalog_units(lang=lang)
     pid_filter = (product_id or "").strip()
     if pid_filter:
@@ -472,17 +483,29 @@ def retrieve_catalog_context(
     # Deduplicate existing files only
     media_paths = [p for p in media_paths if p.is_file()]
 
+    # Follow-up "send it / ببینم" with a scoped product: attach folder photos even if score is weak.
+    if send_now and pid_filter and not media_paths:
+        from src.knowledge.catalog_index import listed_image_paths
+
+        media_paths = listed_image_paths(project_root, pid_filter, limit=max(limit_media, 4))
+
     # Only attach screenshots when question is UI/howto-related AND media is strongly linked
     top_media_score = media_scored[0][0] if media_scored else 0.0
+    want_ui = wants_catalog_media(query) or wants_catalog_media(search_query)
     attach_media = bool(
         media_paths
-        and wants_catalog_media(query)
-        and (top_media_score >= 12.0 or (educational and top_media_score >= 10.0))
+        and (
+            send_now
+            or (
+                want_ui
+                and (top_media_score >= 12.0 or (educational and top_media_score >= 10.0) or send_now)
+            )
+        )
     )
     if not attach_media:
         media_paths = []
 
-    insufficient = not evidence
+    insufficient = not evidence and not (send_now and media_paths)
     prompt_block = _format_prompt_block(
         evidence=evidence,
         media_units=[m for _, m in media_scored[:limit_media]] if attach_media else [],

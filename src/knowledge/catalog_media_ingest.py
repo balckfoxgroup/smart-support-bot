@@ -268,8 +268,10 @@ async def ingest_files_to_product_catalog(
             json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
         load_product_catalogs(knowledge_root)
+        from src.knowledge.catalog_index import write_catalog_indexes
         from src.knowledge.refresh import notify_knowledge_changed
 
+        write_catalog_indexes(knowledge_root, project_root)
         notify_knowledge_changed()
     except Exception as exc:  # noqa: BLE001
         return IngestResult(
@@ -380,8 +382,10 @@ async def reindex_product_media_with_ai(
         json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     load_product_catalogs(knowledge_root)
+    from src.knowledge.catalog_index import write_catalog_indexes
     from src.knowledge.refresh import notify_knowledge_changed
 
+    write_catalog_indexes(knowledge_root, project_root)
     notify_knowledge_changed()
     return IngestResult(
         ok=True,

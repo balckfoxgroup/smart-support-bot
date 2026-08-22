@@ -392,7 +392,13 @@ def ai_products_snippet(
                 media_guides.append(f"- {path or 'photo'}: {guide}")
         if media_guides:
             parts.append("Photo/text AI guides:\n" + "\n".join(media_guides[:24]))
-        return "\n\n".join(parts)[:limit_chars]
+        try:
+            from src.knowledge.catalog_index import build_catalog_index_markdown
+
+            parts.append(build_catalog_index_markdown(product_id=scope))
+        except Exception:  # noqa: BLE001
+            logger.exception("catalog index snippet failed")
+        return "\n\n".join(parts)[: max(limit_chars, 7000)]
 
     q = (query or "").lower()
     product_ask = any(

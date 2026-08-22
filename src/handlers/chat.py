@@ -24,6 +24,7 @@ from src.ai.persona import (
 )
 from src.access import AdminAccess
 from src.config import Settings, is_bot_admin
+from src.knowledge.catalog_index import listed_image_paths, wants_send_media
 from src.knowledge.catalog_rag import retrieve_catalog_context
 from src.knowledge.catalog_search import CatalogSiteSearch, looks_unsure, unsure_handoff
 from src.knowledge.intents import IntentMatcher, looks_identity
@@ -137,15 +138,42 @@ def setup_chat_router(
 
         ask_product = await users.get_ask_ai_product(user.id)
         ask_kb = keyboards.ask_ai_keyboard(lang, product_id=ask_product)
+        history = await users.get_chat_history(user.id)
+        history_blob = "\n".join(
+            f"{h['role']}: {h['content']}" for h in history[-8:]
+        )
         retrieval = retrieve_catalog_context(
             text,
             lang=lang,
             project_root=settings.project_root,
             limit_features=4,
-            limit_media=2,
+            limit_media=4 if wants_send_media(text) else 2,
             product_id=ask_product,
+            prior_text=history_blob,
         )
         media_paths = list(retrieval.media_paths) if retrieval.attach_media else []
+        if wants_send_media(text) and not media_paths and ask_product:
+            media_paths = listed_image_paths(
+                settings.project_root, ask_product, limit=4
+            )
+
+        if wants_send_media(text) and media_paths:
+            caption = (
+                "تصویر کاتالوگ همین محصول — از فایل‌های ذخیره‌شده ارسال شد."
+                if (lang or "").startswith("fa")
+                else "Catalog photo from stored product files."
+            )
+            if retrieval.units:
+                body = (retrieval.units[0].body or retrieval.units[0].title or "").strip()
+                if body:
+                    caption = body[:1000]
+            await users.append_chat(user.id, "user", text)
+            await users.append_chat(user.id, "assistant", caption)
+            await metrics.record_answered(referred_support=False, ai_solved=True)
+            await messaging.answer_with_media(
+                message, caption, images=media_paths, reply_markup=ask_kb
+            )
+            return
 
         # Local memory fast path — survives AI API changes
         mem_hit = memory.lookup(text, lang=lang)
@@ -168,11 +196,6 @@ def setup_chat_router(
             else:
                 await message.answer(final, reply_markup=ask_kb)
             return
-
-        history = await users.get_chat_history(user.id)
-        history_blob = "\n".join(
-            f"{h['role']}: {h['content']}" for h in history[-6:]
-        )
 
         match = intents.match(text, lang, prior_blob=history_blob)
 
@@ -309,6 +332,8 @@ def setup_chat_router(
             f"{SUPPORT_HANDLE}.\n"
             "Do not include website/group/@support links unless contact/purchase was asked "
             "or you are honestly handing off because you do not know.\n"
+            "If the catalog media index lists a photo, it exists. Never deny that the photo exists.\n"
+            "The bot sends catalog files itself. Do not say you cannot send images.\n"
             "If prior turns show Exit Server, answer Add Exit Server only — not Central Full Deploy.\n"
             "Persian: start every sentence with a Persian word; prefer Persian wording; "
             "never rename official product names "
@@ -345,6 +370,12 @@ def setup_chat_router(
                 fallback = download_or_site_fallback(lang)
             if fallback:
                 answer = fallback
+            elif media_paths:
+                answer = (
+                    "تصویر کاتالوگ از فایل ذخیره‌شده ارسال می‌شود."
+                    if (lang or "").startswith("fa")
+                    else "Sending the stored catalog photo."
+                )
             else:
                 try:
                     await wait.edit_text(texts.t(texts.AI_ERROR, lang))
@@ -369,6 +400,12 @@ def setup_chat_router(
                 answer = download_or_site_fallback(lang)
             elif fallback:
                 answer = fallback
+            elif media_paths:
+                answer = (
+                    "تصویر کاتالوگ از فایل ذخیره‌شده ارسال می‌شود."
+                    if (lang or "").startswith("fa")
+                    else "Sending the stored catalog photo."
+                )
             else:
                 answer = texts.t(texts.AI_ERROR, lang)
 

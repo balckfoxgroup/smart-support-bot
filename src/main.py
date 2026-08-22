@@ -138,6 +138,13 @@ async def run() -> None:
 
     products = load_product_catalogs(settings.knowledge_root)
     log.info("Product catalogs ready: %s", [p.product_id for p in products])
+    try:
+        from src.knowledge.catalog_index import write_catalog_indexes
+
+        write_catalog_indexes(settings.knowledge_root, settings.project_root)
+        knowledge.load()
+    except Exception:  # noqa: BLE001
+        log.exception("catalog index markdown write skipped")
 
     intents = IntentMatcher(settings)
     intents.load()
@@ -149,6 +156,12 @@ async def run() -> None:
 
     def _reload_ai_knowledge() -> None:
         load_product_catalogs(settings.knowledge_root)
+        try:
+            from src.knowledge.catalog_index import write_catalog_indexes
+
+            write_catalog_indexes(settings.knowledge_root, settings.project_root)
+        except Exception:  # noqa: BLE001
+            log.exception("catalog index refresh failed")
         knowledge.load()
         intents.load()
         catalog.load()

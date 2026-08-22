@@ -48,6 +48,8 @@ def product_id_from_guide_stem(stem: str) -> str | None:
     base = base.strip("-_.")
     if not base or base == "readme":
         return None
+    if base.endswith("-catalog-index"):
+        return base[: -len("-catalog-index")] or None
     for alias, pid in _PRODUCT_GUIDE_ALIASES.items():
         if base == alias or base.startswith(alias + "-") or base.startswith(alias + "_"):
             return pid
