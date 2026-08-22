@@ -50,6 +50,8 @@ def product_id_from_guide_stem(stem: str) -> str | None:
         return None
     if base.endswith("-catalog-index"):
         return base[: -len("-catalog-index")] or None
+    if base.endswith("-catalog-training"):
+        return base[: -len("-catalog-training")] or None
     if base.endswith("-ai-memory"):
         return base[: -len("-ai-memory")] or None
     if base.endswith("-ai-behavior") or base.endswith("-AI_BEHAVIOR"):

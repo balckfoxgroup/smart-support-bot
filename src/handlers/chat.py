@@ -291,6 +291,20 @@ def setup_chat_router(
             "Never invent steps. Follow operator behavior rules in every reply.\n"
         )
 
+        def _scoped_catalog_fallback() -> str:
+            bits: list[str] = []
+            if retrieval.units:
+                bits.append(
+                    "\n\n".join(u.body for u in retrieval.units if (u.body or "").strip())
+                )
+            if (memory_snip or "").strip():
+                bits.append(memory_snip.strip()[:1600])
+            if (products_snip or "").strip():
+                bits.append(products_snip.strip()[:1800])
+            if (kb_snip or "").strip() and ask_product:
+                bits.append(kb_snip.strip()[:1200])
+            return "\n\n".join(b for b in bits if b).strip()
+
         extra_sources = join_context_blocks(
             [
                 memory_snip,
@@ -352,13 +366,7 @@ def setup_chat_router(
             )
         except AIClientError as exc:
             logger.exception("AI chat failed: %s", exc)
-            fallback = ""
-            if retrieval.units:
-                fallback = "\n\n".join(
-                    u.body for u in retrieval.units if (u.body or "").strip()
-                ).strip()
-            if not fallback and (kb_snip or "").strip():
-                fallback = kb_snip.strip()[:1200]
+            fallback = _scoped_catalog_fallback()
             if not fallback and not ask_product and match and match.record:
                 fallback = (
                     (match.record.full_answer or "").strip()
@@ -386,11 +394,7 @@ def setup_chat_router(
         answer = strip_reasoning_leak(answer)
         if looks_like_reasoning_leak(answer) or looks_incomplete_reply(answer):
             logger.warning("Ask AI reply rejected (leak/incomplete); using safe fallback")
-            fallback = ""
-            if retrieval.units:
-                fallback = "\n\n".join(
-                    u.body for u in retrieval.units if (u.body or "").strip()
-                ).strip()
+            fallback = _scoped_catalog_fallback()
             if not fallback and not ask_product and match and match.record:
                 fallback = (
                     (match.record.full_answer or "").strip()

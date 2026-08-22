@@ -204,11 +204,49 @@ def append_operator_teaching(
     return targets
 
 
+def catalog_training_md_path(knowledge_root: Path, product_id: str) -> Path:
+    return knowledge_root / "product_guides" / f"{_safe_pid(product_id)}-catalog-training.md"
+
+
+def write_catalog_training_md(knowledge_root: Path, product_id: str, text: str) -> Path:
+    """Write catalog teaching into a product-scoped markdown file for Ask AI."""
+    pid = (product_id or "").strip()
+    path = catalog_training_md_path(knowledge_root, pid)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = (text or "").strip()
+    path.write_text(
+        f"# Catalog training for {pid}\n\n"
+        "Use only for this product catalog. Do not mix other products.\n\n"
+        + (body if body else "(none yet)")
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 def set_catalog_teaching(knowledge_root: Path, product_id: str, text: str) -> None:
     """Replace catalog-only teaching (edit or clear)."""
     mem = load_ai_memory(knowledge_root, product_id)
     mem.catalog = (text or "").strip()
     save_ai_memory(knowledge_root, product_id, mem)
+    write_catalog_training_md(knowledge_root, product_id, mem.catalog)
+
+
+def append_catalog_training(knowledge_root: Path, product_id: str, new_text: str) -> str:
+    """Append new catalog teaching to the product JSON + markdown. Returns full text."""
+    pid = (product_id or "").strip()
+    add = (new_text or "").strip()
+    from src.knowledge.product_catalogs import load_product_raw, save_product_raw
+
+    raw = load_product_raw(knowledge_root, pid) or {}
+    prev = str(raw.get("ai_training_text") or "").strip()
+    if not prev:
+        prev = catalog_teaching_text(knowledge_root, pid)
+    combined = (prev + "\n\n" + add).strip() if prev and add else (add or prev)
+    raw["ai_training_text"] = combined
+    save_product_raw(knowledge_root, pid, raw)
+    set_catalog_teaching(knowledge_root, pid, combined)
+    return combined
 
 
 def catalog_teaching_text(knowledge_root: Path, product_id: str) -> str:

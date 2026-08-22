@@ -629,6 +629,10 @@ async def _show_training_hub(
     if not saved:
         raw = load_product_raw(settings.knowledge_root, pid) or {}
         saved = str(raw.get("ai_training_text") or "").strip()
+    if saved:
+        status = ak.msg("products_training_status_ok", lang).format(n=len(saved))
+    else:
+        status = ak.msg("products_training_status_empty", lang)
     await bot_settings.set_session(
         uid,
         {
@@ -640,7 +644,7 @@ async def _show_training_hub(
         },
     )
     await message.answer(
-        ak.msg("products_training_hub", lang).format(saved=saved or "—"),
+        ak.msg("products_training_hub", lang).format(status=status),
         reply_markup=ak.training_hub_keyboard(lang),
     )
 
@@ -2124,12 +2128,9 @@ def setup_admin_settings_router(
                 await bot_settings.set_session(uid, {"mode": "products_hub"})
                 await _show_products_hub(message, settings, lang)
                 return
-            raw = load_product_raw(settings.knowledge_root, pid) or {}
-            raw["ai_training_text"] = text
-            save_product_raw(settings.knowledge_root, pid, raw)
-            from src.knowledge.ai_memory import set_catalog_teaching
+            from src.knowledge.ai_memory import append_catalog_training
 
-            set_catalog_teaching(settings.knowledge_root, pid, text)
+            append_catalog_training(settings.knowledge_root, pid, text)
             notify_knowledge_changed()
             await audit.write("product_ai_training", admin_id=uid, detail=pid)
             back_wizard = bool(sess.get("from_catalog_wizard"))

@@ -768,27 +768,35 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
     },
     "products_ask_training": {
         "fa": (
-            "فقط آموزش کاتالوگ و نحوهٔ توضیح کاتالوگ به کاربر.\n"
+            "ویرایش متن آموزشی کاتالوگ.\n"
             "متن فعلی:\n{saved}\n\n"
-            "متن جدید را بفرستید تا جایگزین شود. رفتار کلی ربات را اینجا ننویسید."
+            "متن جدید را بفرستید تا به ادامهٔ همین متن اضافه شود."
         ),
         "en": (
-            "Catalog teaching only — how the AI should explain this catalog to users.\n"
+            "Edit catalog training text.\n"
             "Current text:\n{saved}\n\n"
-            "Send the new text to replace it. Do not put general bot behavior here."
+            "Send the new text; it will be appended to the current text."
         ),
     },
     "products_training_hub": {
         "fa": (
-            "متن آموزشی کاتالوگ — فقط دربارهٔ کاتالوگ و آموزش کاربر از روی کاتالوگ.\n\n"
-            "متن فعلی:\n{saved}\n\n"
-            "ویرایش یا حذف را از کلیدها بزنید."
+            "متن آموزشی کاتالوگ — فقط دربارهٔ همین کاتالوگ.\n\n"
+            "وضعیت: {status}\n"
+            "متن کامل فقط با «ویرایش متن آموزشی» دیده می‌شود."
         ),
         "en": (
-            "Catalog training text — catalog and how to teach users from it only.\n\n"
-            "Current text:\n{saved}\n\n"
-            "Use Edit or Delete below."
+            "Catalog training text — this catalog only.\n\n"
+            "Status: {status}\n"
+            "Full text is shown only when you tap Edit training text."
         ),
+    },
+    "products_training_status_empty": {
+        "fa": "هنوز متنی ذخیره نشده.",
+        "en": "No training text saved yet.",
+    },
+    "products_training_status_ok": {
+        "fa": "ذخیره شده ({n} نویسه).",
+        "en": "Saved ({n} characters).",
     },
     "products_training_cleared": {
         "fa": "متن آموزشی کاتالوگ حذف شد.",
