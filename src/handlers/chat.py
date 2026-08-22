@@ -24,6 +24,11 @@ from src.ai.persona import (
 )
 from src.access import AdminAccess
 from src.config import Settings, is_bot_admin
+from src.knowledge.ai_memory import (
+    append_learned_answer,
+    behavior_rules_text,
+    memory_prompt_block,
+)
 from src.knowledge.catalog_index import listed_image_paths, wants_send_media
 from src.knowledge.catalog_rag import retrieve_catalog_context
 from src.knowledge.catalog_search import CatalogSiteSearch, looks_unsure, unsure_handoff
@@ -279,30 +284,38 @@ def setup_chat_router(
             )
 
         facts = format_facts_from_meta(knowledge.index.facts or intents.facts)
-        system = build_system_prompt(lang, facts_block=facts)
+        operator_style = (
+            behavior_rules_text(settings.knowledge_root, ask_product)
+            if ask_product
+            else ""
+        )
+        system = build_system_prompt(
+            lang, facts_block=facts, operator_style=operator_style
+        )
+        memory_snip = (
+            memory_prompt_block(settings.knowledge_root, ask_product)
+            if ask_product
+            else ""
+        )
 
-        md_priority_note = ""
-        if retrieval.insufficient and (kb_snip or "").strip():
-            md_priority_note = (
-                "### Fallback instruction\n"
-                "Catalog feature match was weak. Prefer Product Map / FAQ markdown "
-                "snippets below. Still do not invent missing facts.\n"
-            )
-        elif not retrieval.insufficient:
-            md_priority_note = (
-                "### Priority\n"
-                "Prefer catalog evidence first. Use markdown/FAQ only to fill gaps.\n"
-            )
+        md_priority_note = (
+            "### Priority\n"
+            "1) Operator AI memory (behavior + taught facts + learned Q&A).\n"
+            "2) Product catalog / screenshots.\n"
+            "3) Other markdown only if memory and catalog lack the fact.\n"
+            "Never invent steps. Follow operator behavior rules in every reply.\n"
+        )
 
         extra_sources = join_context_blocks(
             [
+                memory_snip,
                 retrieval.prompt_block,
                 md_priority_note,
                 products_snip,
                 catalog_snip,
                 site_snip,
             ],
-            9000,
+            11000,
         )
 
         history_section = history_blob or "(none)"
@@ -321,8 +334,8 @@ def setup_chat_router(
             f"Knowledge / product-map markdown snippets:\n{kb_snip or '(none)'}\n\n"
             f"Catalog / site sources:\n{extra_sources or '(none)'}\n\n"
             "Write a helpful Telegram support reply as a real tutor/support agent.\n"
-            "Source order: (1) catalog evidence, (2) product-map/FAQ markdown, "
-            "(3) say insufficient if both lack the fact — never invent steps.\n"
+            "Source order: (1) Operator AI memory, (2) catalog evidence, "
+            "(3) other markdown — never invent steps.\n"
             "When the question is educational, explain: what it is, what it is for, "
             "ordered steps, and any limit/tip present in the evidence.\n"
             "Do not list only button names. Finish every sentence completely.\n"
@@ -451,6 +464,16 @@ def setup_chat_router(
         source = "catalog" if has_catalog else ("md" if has_md else "none")
         if has_catalog and has_md:
             source = "catalog+md"
+        if (
+            ask_product
+            and solved
+            and not referred
+            and final != texts.t(texts.AI_ERROR, lang)
+        ):
+            try:
+                append_learned_answer(settings.knowledge_root, ask_product, text, final)
+            except Exception:  # noqa: BLE001
+                logger.exception("ai memory learned save failed")
         try:
             memory.remember(
                 query=text,

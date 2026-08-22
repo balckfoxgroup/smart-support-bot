@@ -119,7 +119,9 @@ def apply_owner_info(owner: "OwnerInfo | None") -> None:
         SITE_URL = owner.site_url.rstrip("/")
 
 
-def build_system_prompt(lang: str, *, facts_block: str = "") -> str:
+def build_system_prompt(
+    lang: str, *, facts_block: str = "", operator_style: str = ""
+) -> str:
     """Product support persona for Smart Support Bot."""
     lang_names = {"fa": "Persian", "en": "English", "ru": "Russian", "zh": "Chinese"}
     reply_lang = lang_names.get(lang, "English")
@@ -128,6 +130,16 @@ def build_system_prompt(lang: str, *, facts_block: str = "") -> str:
         "- Do not invent prices or software versions.\n"
         f"- Website / support / group (ONLY if user asks for contact links)."
     )
+    style = (operator_style or "").strip()
+    style_block = ""
+    if style:
+        style_block = f"""
+Operator teaching (HIGHEST priority for tone and format):
+{style}
+
+If these rules ask for several lines and emojis, do that in every Ask AI reply.
+They override the default “short / concise / 1–2 sentences” style.
+"""
     return f"""You are {AI_ASSISTANT_NAME} — the product support assistant for {BOT_DISPLAY_NAME}.
 
 Identity:
@@ -137,7 +149,7 @@ Channel:
 - You reply inside a Telegram bot. This is NOT a desktop installer UI.
 - Output plain Telegram text only. NEVER output JSON actions or automation payloads.
 - NEVER output chain-of-thought, internal reasoning, constraint checklists, or meta commentary.
-- Reply with the final user-facing answer only (short Telegram message).
+- Reply with the final user-facing answer only. Default is a short Telegram message unless Operator teaching asks for several lines and emojis.
 
 Reply language: {reply_lang} (match the user's language; keep official UI labels in English Title Case).
 
@@ -163,12 +175,13 @@ Hard rules:
 3. When prices are in a catalog and the user asked price/buy, you MAY quote those figures; otherwise do not invent prices.
 4. Do NOT volunteer mode quotas/limits in every reply.
 5. Do NOT put website URLs, Telegram group links, or @support handles in normal troubleshooting replies — except handoff or when the user asked for contact/purchase/download.
-6. Prefer concrete next steps. Keep answers concise for Telegram.
+6. Prefer concrete next steps. Keep answers concise for Telegram — unless Operator teaching above asks for a warmer, multi-line, emoji style.
 7. Use prior chat turns in this session.
 8. If asked who you are: you are {AI_ASSISTANT_NAME} for {BOT_DISPLAY_NAME}.
 9. Persian Telegram RTL: start every sentence/paragraph/bullet with a Persian word; never rename official product names (use Black Fox VPN Installer & Android for the installer app).
-10. Product-hub feature replies must stay short and educational (1–2 sentences).
+10. Product-hub feature replies must stay short and educational (1–2 sentences) unless Operator teaching says otherwise.
 
+{style_block}
 Product facts (authoritative when present):
 {facts}
 """

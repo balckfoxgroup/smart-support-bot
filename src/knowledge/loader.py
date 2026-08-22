@@ -50,6 +50,8 @@ def product_id_from_guide_stem(stem: str) -> str | None:
         return None
     if base.endswith("-catalog-index"):
         return base[: -len("-catalog-index")] or None
+    if base.endswith("-ai-memory"):
+        return base[: -len("-ai-memory")] or None
     for alias, pid in _PRODUCT_GUIDE_ALIASES.items():
         if base == alias or base.startswith(alias + "-") or base.startswith(alias + "_"):
             return pid
@@ -270,6 +272,8 @@ class KnowledgeLoader:
                 score += 0.45
             if scope and str(title).startswith("product-guide:"):
                 score += 0.2
+            if "ai-memory" in str(title).lower() or "behavior" in str(title).lower():
+                score += 0.8
             if score > 0:
                 scored.append((score, title, body))
         scored.sort(key=lambda x: x[0], reverse=True)

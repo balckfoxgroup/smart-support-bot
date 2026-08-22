@@ -711,6 +711,7 @@ def setup_admin_settings_router(
         | ak.texts("products_catalog_enrich")
         | ak.texts("products_ai_training")
         | ak.texts("products_product_chat")
+        | ak.texts("products_product_chat_legacy")
         | ak.texts("products_back")
         | ak.texts("catalog_src_site")
         | ak.texts("catalog_src_channel")
@@ -1747,6 +1748,10 @@ def setup_admin_settings_router(
             raw = load_product_raw(settings.knowledge_root, pid) or {}
             raw["ai_training_text"] = text
             save_product_raw(settings.knowledge_root, pid, raw)
+            from src.knowledge.ai_memory import append_operator_teaching
+
+            append_operator_teaching(settings.knowledge_root, pid, text)
+            notify_knowledge_changed()
             await audit.write("product_ai_training", admin_id=uid, detail=pid)
             back_wizard = bool(sess.get("from_catalog_wizard"))
             await bot_settings.set_session(
@@ -1799,13 +1804,27 @@ def setup_admin_settings_router(
             mats.append({"text": chunk, "ai_guide": "operator product chat"})
             raw["operator_materials"] = mats[-40:]
             save_product_raw(settings.knowledge_root, pid, raw)
+            from src.knowledge.ai_memory import append_operator_teaching
+
+            kind = append_operator_teaching(settings.knowledge_root, pid, chunk)
             notify_knowledge_changed()
             await audit.write("product_ai_chat", admin_id=uid, detail=pid)
             await bot_settings.set_session(
                 uid, {"mode": "product_ai_chat", "product_id": pid}
             )
+            stored = (
+                "\n\n✅ قانون رفتار در فایل حافظه ذخیره شد و در Ask AI اعمال می‌شود."
+                if kind == "behavior"
+                else "\n\n✅ نکته در فایل حافظه ذخیره شد و Ask AI اول همان را می‌خواند."
+            )
+            if not (lang or "").startswith("fa"):
+                stored = (
+                    "\n\n✅ Behavior rule saved to memory and used in Ask AI."
+                    if kind == "behavior"
+                    else "\n\n✅ Fact saved to memory. Ask AI reads it first."
+                )
             await message.answer(
-                (reply or ak.msg("saved_ok", lang))[:3900],
+                ((reply or ak.msg("saved_ok", lang)) + stored)[:3900],
                 reply_markup=ak.product_detail_keyboard(lang),
             )
             return

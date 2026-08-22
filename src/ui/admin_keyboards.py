@@ -200,6 +200,10 @@ _LABELS: dict[str, dict[Lang, str]] = {
         "en": "🗂 Product catalog",
     },
     "products_product_chat": {
+        "fa": "💬 گفتگو با AI",
+        "en": "💬 Chat With AI",
+    },
+    "products_product_chat_legacy": {
         "fa": "💬 گفتگو با ربات",
         "en": "💬 Chat With Bot",
     },
@@ -637,14 +641,19 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
     },
     "products_product_chat_intro": {
         "fa": (
-            "💬 گفتگو با ربات — فقط دربارهٔ همین محصول.\n\n"
-            "هر نکته، آموزش یا موردی که AI باید بداند را همین‌جا بنویسید. "
-            "ربات همان محصول را به‌روز می‌کند و در پاسخ به کاربرها از آن استفاده می‌کند."
+            "💬 گفتگو با AI — فقط دربارهٔ همین محصول.\n\n"
+            "از همین‌جا رفتار و دانش ایجنت را آموزش دهید: لحن، چندسطری بودن، "
+            "ایموجی، نکتهٔ فنی یا هر چیزی که Ask AI باید بداند.\n"
+            "متن اینجا و «ارسال متن آموزشی برای ai» در یک فایل حافظه ذخیره می‌شود "
+            "تا با عوض شدن ایجنت از بین نرود. Ask AI اول همان فایل را می‌خواند "
+            "و اگر جواب نبود سراغ کاتالوگ می‌رود."
         ),
         "en": (
-            "💬 Chat With Bot — this product only.\n\n"
-            "Write any tip, training, or fact the AI should know. "
-            "It is stored on this product and used in later user answers."
+            "💬 Chat With AI — this product only.\n\n"
+            "Teach the agent here: tone, multi-line replies, emojis, or product facts "
+            "that Ask AI must follow.\n"
+            "This chat and Send AI training text share one memory file so a new agent "
+            "still sees it. Ask AI reads that file first, then the catalog."
         ),
     },
     "catalog_src_site": {
