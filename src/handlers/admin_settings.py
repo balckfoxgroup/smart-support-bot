@@ -70,7 +70,10 @@ class _SettingsButtonFilter(Filter):
         text = (message.text or "").strip()
         if not text:
             return False
-        return text in self._static or text in ak.custom_button_labels()
+        if text in self._static or text in ak.custom_button_labels():
+            return True
+        # Old keyboards / RTL may send "✅ ساخت کاتالوگ" or "ساخت کاتالوگ ✅".
+        return ak.resolve_action(text) == "catalog_run"
 
 
 async def _settings_kb(lang: str, store: BotSettingsStore):
@@ -713,6 +716,16 @@ def setup_admin_settings_router(
         | ak.texts("catalog_src_channel")
         | ak.texts("catalog_src_group")
         | ak.texts("catalog_run")
+        | {
+            "✅ ساخت کاتالوگ",
+            "ساخت کاتالوگ ✅",
+            "ساخت کاتالوگ",
+            "✅ Build Catalog",
+            "Build Catalog ✅",
+            "Build Catalog",
+            "📦 ساخت کاتالوگ",
+            "📦 Build Catalog",
+        }
         | ak.texts("owner_bot_name")
         | ak.texts("owner_site")
         | ak.texts("owner_channel")
@@ -1250,8 +1263,8 @@ def setup_admin_settings_router(
 
         if action == "catalog_run":
             sess = await bot_settings.get_session(uid)
-            staging = Path(str(sess.get("catalog_staging") or _staging_dir(settings, uid)))
             pid = str(sess.get("product_id") or sess.get("product_hint") or "").strip()
+            staging = Path(str(sess.get("catalog_staging") or _staging_dir(settings, uid, pid)))
             if not pid:
                 await message.answer(
                     "اول محصول را باز کنید، بعد ساخت کاتالوگ را بزنید."
@@ -1268,8 +1281,10 @@ def setup_admin_settings_router(
                 staging=staging if staging.is_dir() else None,
             )
             notes = _load_enrich_notes(staging)
-            sess["mode"] = "catalog_run_confirm"
+            sess["mode"] = "catalog_wizard"
             sess["catalog_staging"] = str(staging)
+            sess["product_id"] = pid
+            sess["product_hint"] = pid
             await bot_settings.set_session(uid, sess)
 
             def _shown(key: str) -> str:
@@ -1285,9 +1300,37 @@ def setup_admin_settings_router(
                     channel=_shown("channel"),
                     group=_shown("group"),
                     notes=len(notes),
-                ),
+                )
+                + "\n\n"
+                + ak.msg("catalog_building", lang),
                 reply_markup=ak.catalog_wizard_keyboard(lang, sources=_source_marks(raw)),
             )
+            if ai is None:
+                await message.answer(
+                    "❌ سرویس AI در دسترس نیست. ساخت کاتالوگ انجام نشد."
+                    if (lang or "").startswith("fa")
+                    else "❌ AI is unavailable. Catalog was not built.",
+                    reply_markup=ak.catalog_wizard_keyboard(lang, sources=_source_marks(raw)),
+                )
+                return
+            try:
+                await _execute_catalog_build(
+                    message=message,
+                    settings=settings,
+                    bot_settings=bot_settings,
+                    uid=uid,
+                    lang=lang,
+                    sess=sess,
+                    ai=ai,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("catalog_run handler failed: %s", exc)
+                await message.answer(
+                    f"❌ روند ساخت کاتالوگ ناموفق بود.\nعلت: {exc}"
+                    if (lang or "").startswith("fa")
+                    else f"❌ Catalog build failed.\nCause: {exc}",
+                    reply_markup=ak.catalog_wizard_keyboard(lang, sources=_source_marks(raw)),
+                )
             return
 
         if action in _OWNER_FIELD_BY_ACTION:

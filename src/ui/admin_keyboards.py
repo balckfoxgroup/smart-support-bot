@@ -228,8 +228,8 @@ _LABELS: dict[str, dict[Lang, str]] = {
         "en": "👥 Group source",
     },
     "catalog_run": {
-        "fa": "✅ ساخت کاتالوگ",
-        "en": "✅ Build Catalog",
+        "fa": "📦 ساخت کاتالوگ",
+        "en": "📦 Build Catalog",
     },
     "settings_messages": {
         "fa": "📨 ثبت و ویرایش پیام‌های پیش‌فرض",
@@ -685,8 +685,7 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
             "سایت: {site}\n"
             "کانال: {channel}\n"
             "گروه: {group}\n"
-            "یادداشت‌های راهنما: {notes}\n\n"
-            "اگر می‌خواهید ثبت شود «تایید» بفرستید؛ وگرنه «عدم تایید»."
+            "یادداشت‌های راهنما: {notes}"
         ),
         "en": (
             "Ready to send to AI and the server.\n"
@@ -694,8 +693,7 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
             "Site: {site}\n"
             "Channel: {channel}\n"
             "Group: {group}\n"
-            "Guide notes: {notes}\n\n"
-            "Type Confirm to register, or Decline to cancel."
+            "Guide notes: {notes}"
         ),
     },
     "catalog_declined": {
@@ -727,10 +725,6 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
             "Current training text:\n{saved}\n\n"
             "Send the new training text. The AI will answer users from this text."
         ),
-    },
-    "catalog_run": {
-        "fa": "✅ ساخت کاتالوگ",
-        "en": "✅ Build Catalog",
     },
     "catalog_src_toggled": {
         "fa": "منبع‌ها: سایت={site} | کانال={channel} | گروه={group}",
@@ -1034,24 +1028,36 @@ def texts(action: str) -> frozenset[str]:
     return frozenset(out)
 
 
+def _norm_button_text(text: str | None) -> str:
+    """Strip Telegram RTL/check prefixes so '✅ ساخت کاتالوگ' still matches."""
+    needle = (text or "").strip()
+    for token in ("✅", "⬜"):
+        needle = needle.replace(token, " ")
+    return " ".join(needle.split())
+
+
 def resolve_action(text: str | None) -> str | None:
     if not text:
         return None
-    needle = text.strip()
-    for prefix in ("✅ ", "⬜ "):
-        if needle.startswith(prefix):
-            needle = needle[len(prefix) :].strip()
-            break
+    raw = text.strip()
+    needle = _norm_button_text(raw)
     from src.ui.system_layout import load_layout
 
     layout = load_layout()
     for action, lab in (layout.get("renames") or {}).items():
         if not isinstance(lab, dict):
             continue
-        if needle in {str(lab.get("fa") or "").strip(), str(lab.get("en") or "").strip()}:
+        variants = {
+            _norm_button_text(str(lab.get("fa") or "")),
+            _norm_button_text(str(lab.get("en") or "")),
+        }
+        variants.discard("")
+        if raw in {str(lab.get("fa") or "").strip(), str(lab.get("en") or "").strip()} or needle in variants:
             return str(action)
     for action, table in _LABELS.items():
-        if needle in table.values():
+        values = {str(v) for v in table.values()}
+        norms = {_norm_button_text(v) for v in values}
+        if raw in values or needle in norms:
             if action.endswith("_legacy"):
                 return action[: -len("_legacy")]
             if action == "change_agent_api_legacy":
