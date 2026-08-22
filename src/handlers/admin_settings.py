@@ -731,6 +731,7 @@ def setup_admin_settings_router(
         | ak.texts("owner_info")
         | ak.texts("creator_contact")
         | ak.texts("bot_config_chat")
+        | ak.texts("bot_config_chat_legacy")
         | ak.texts("build_catalogs")
         | ak.texts("products_hub")
         | ak.texts("products_add")
@@ -1108,24 +1109,30 @@ def setup_admin_settings_router(
         if action == "bot_config_chat":
             sess = await bot_settings.get_session(uid)
             pid = str(sess.get("product_id") or "").strip()
-            if pid and str(sess.get("mode") or "") in {
+            from_product = bool(pid) and str(sess.get("mode") or "") in {
                 "product_detail",
                 "catalog_wizard",
                 "catalog_enrich",
                 "product_ai_chat",
-            }:
-                await bot_settings.set_session(
-                    uid, {"mode": "product_ai_chat", "product_id": pid, "history": []}
-                )
-                await message.answer(
-                    ak.msg("products_product_chat_intro", lang),
-                    reply_markup=ak.product_detail_keyboard(lang),
-                )
-                return
-            await bot_settings.set_session(uid, {"mode": "bot_config_chat", "history": []})
+                "bot_config_chat",
+                "products_ai_training_hub",
+            }
+            await bot_settings.set_session(
+                uid,
+                {
+                    "mode": "bot_config_chat",
+                    "product_id": pid,
+                    "history": [],
+                    "from_product": from_product,
+                },
+            )
             await message.answer(
                 ak.msg("bot_chat_start", lang),
-                reply_markup=ak.cancel_keyboard(lang),
+                reply_markup=(
+                    ak.product_detail_keyboard(lang)
+                    if from_product
+                    else ak.cancel_keyboard(lang)
+                ),
             )
             return
 
@@ -1253,10 +1260,16 @@ def setup_admin_settings_router(
                 return
             if action == "products_product_chat":
                 await bot_settings.set_session(
-                    uid, {"mode": "product_ai_chat", "product_id": pid, "history": []}
+                    uid,
+                    {
+                        "mode": "bot_config_chat",
+                        "product_id": pid,
+                        "history": [],
+                        "from_product": True,
+                    },
                 )
                 await message.answer(
-                    ak.msg("products_product_chat_intro", lang),
+                    ak.msg("bot_chat_start", lang),
                     reply_markup=ak.product_detail_keyboard(lang),
                 )
                 return
@@ -1877,63 +1890,6 @@ def setup_admin_settings_router(
             )
             return
 
-        if mode == "product_ai_chat":
-            pid = str(sess.get("product_id") or "").strip()
-            if not pid or ai is None:
-                await _show_product_detail(message, settings, lang, pid or "")
-                return
-            catalog = ai_products_snippet(text, lang=lang or "fa", product_id=pid)
-            try:
-                reply = await ai.chat(
-                    [
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are receiving operator teaching for ONE product. "
-                                "Reply in the operator language. Confirm what you learned in 4-8 lines. "
-                                "Do not change other products.\n\n"
-                                + catalog
-                            ),
-                        },
-                        {"role": "user", "content": text},
-                    ]
-                )
-            except Exception as exc:  # noqa: BLE001
-                await message.answer(f"❌ {exc}", reply_markup=ak.product_detail_keyboard(lang))
-                return
-            raw = load_product_raw(settings.knowledge_root, pid) or {}
-            chunk = text.strip()
-            mats = raw.get("operator_materials")
-            if not isinstance(mats, list):
-                mats = []
-            mats.append({"text": chunk, "ai_guide": "operator product chat"})
-            raw["operator_materials"] = mats[-40:]
-            save_product_raw(settings.knowledge_root, pid, raw)
-            from src.knowledge.ai_memory import append_operator_teaching
-
-            kind = append_operator_teaching(settings.knowledge_root, pid, chunk)
-            notify_knowledge_changed()
-            await audit.write("product_ai_chat", admin_id=uid, detail=pid)
-            await bot_settings.set_session(
-                uid, {"mode": "product_ai_chat", "product_id": pid}
-            )
-            stored = (
-                "\n\n✅ قانون رفتار در فایل حافظه ذخیره شد و در Ask AI اعمال می‌شود."
-                if kind == "behavior"
-                else "\n\n✅ نکته در فایل حافظه ذخیره شد و Ask AI اول همان را می‌خواند."
-            )
-            if not (lang or "").startswith("fa"):
-                stored = (
-                    "\n\n✅ Behavior rule saved to memory and used in Ask AI."
-                    if kind == "behavior"
-                    else "\n\n✅ Fact saved to memory. Ask AI reads it first."
-                )
-            await message.answer(
-                ((reply or ak.msg("saved_ok", lang)) + stored)[:3900],
-                reply_markup=ak.product_detail_keyboard(lang),
-            )
-            return
-
         if mode == "edit_health":
             field = str(sess.get("health_field") or "")
             if field == "times":
@@ -2287,9 +2243,36 @@ def setup_admin_settings_router(
             await _show_slot(message, bot_settings, key, slot_index, lang)
             return
 
-        if mode == "bot_config_chat":
+        if mode in {"bot_config_chat", "product_ai_chat"}:
             if ai is None:
                 await message.answer("AI unavailable.")
+                return
+            from src.knowledge.ai_memory import append_operator_teaching, is_behavior_text
+
+            teach_pid = str(sess.get("product_id") or "").strip()
+            if is_behavior_text(text):
+                append_operator_teaching(
+                    settings.knowledge_root,
+                    teach_pid,
+                    text,
+                    kind="behavior",
+                )
+                notify_knowledge_changed()
+                await audit.write("ai_behavior_teach", admin_id=uid, detail=teach_pid or "_global")
+                kb = (
+                    ak.product_detail_keyboard(lang)
+                    if sess.get("from_product") or teach_pid
+                    else ak.cancel_keyboard(lang)
+                )
+                await message.answer(
+                    (
+                        "✅ قانون رفتار در فایل حافظهٔ سراسری ذخیره شد.\n"
+                        "Ask AI از این به بعد باید چندخطی و با ایموجی جواب بدهد."
+                        if (lang or "").startswith("fa")
+                        else "✅ Behavior rule saved globally. Ask AI will use it on the next question."
+                    ),
+                    reply_markup=kb,
+                )
                 return
             lowered = text.lower()
             if any(k in lowered for k in ("سازنده", "creator_contact", "creator contact")):
@@ -2966,9 +2949,37 @@ def setup_admin_settings_router(
                     await _show_control_home(message, control, lang)
                     return
 
+            if not result.applied and not result.open_section:
+                teach_words = (
+                    "محصول",
+                    "آموزش",
+                    "کاتالوگ",
+                    "کاربر",
+                    "product",
+                    "teach",
+                    "catalog",
+                )
+                if any(w in text for w in teach_words) or sess.get("from_product"):
+                    append_operator_teaching(
+                        settings.knowledge_root,
+                        teach_pid,
+                        text,
+                        kind="fact",
+                        all_products=not teach_pid,
+                    )
+                    notify_knowledge_changed()
+                    extra = (
+                        "\n\n✅ نکتهٔ محصول در فایل حافظه ذخیره شد."
+                        if (lang or "").startswith("fa")
+                        else "\n\n✅ Product note saved to memory."
+                    )
+                    clean = ((clean or "") + extra).strip()
+
             if result.show_settings_keyboard:
                 await bot_settings.set_session(uid, {"mode": "settings"})
                 kb = await _settings_kb(lang, bot_settings)
+            elif sess.get("from_product") or teach_pid:
+                kb = ak.product_detail_keyboard(lang)
             else:
                 kb = ak.cancel_keyboard(lang)
             await message.answer(

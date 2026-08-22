@@ -81,6 +81,7 @@ class KnowledgeLoader:
         self._load_facts()
         self._load_faq_markdown()
         self._load_product_guides()
+        self._load_ai_behavior()
         self._load_decision_trees()
         logger.info(
             "Knowledge loaded: files=%s faq_langs=%s trees=%s",
@@ -205,6 +206,21 @@ class KnowledgeLoader:
                 elif lang == "en":
                     self.index.faq_chunks.setdefault("fa", []).append(chunk)
 
+    def _load_ai_behavior(self) -> None:
+        path = self.settings.knowledge_root / "AI_BEHAVIOR.md"
+        if not path.is_file():
+            return
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            return
+        if not text:
+            return
+        chunk = ("product-guide:AI behavior", text, "_global")
+        for lang in LANG_FOLDER:
+            self.index.faq_chunks.setdefault(lang, []).append(chunk)
+        self.index.loaded_files += 1
+
     def _load_decision_trees(self) -> None:
         root = self.settings.decision_tree_dir
         if not root.is_dir():
@@ -258,10 +274,16 @@ class KnowledgeLoader:
             if not include_community and title.lower() == "community":
                 continue
             if scope:
-                # Strict isolation: only product-guide chunks for this product
-                if not str(title).startswith("product-guide:"):
-                    continue
-                if (chunk_pid or "") != scope:
+                title_l = str(title).lower()
+                is_behavior = (
+                    "ai-behavior" in title_l
+                    or "behavior rules" in title_l
+                    or (chunk_pid or "") == "_global"
+                )
+                if str(title).startswith("product-guide:"):
+                    if (chunk_pid or "") not in {scope, "_global"} and not is_behavior:
+                        continue
+                elif not is_behavior:
                     continue
             else:
                 # Unscoped Ask AI should not leak another product's private guides heavily;

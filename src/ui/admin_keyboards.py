@@ -160,6 +160,10 @@ _LABELS: dict[str, dict[Lang, str]] = {
         "en": "🛠 Contact Creator",
     },
     "bot_config_chat": {
+        "fa": "💬 گفتگو با AI",
+        "en": "💬 Chat With AI",
+    },
+    "bot_config_chat_legacy": {
         "fa": "💬 گفتگو با ربات",
         "en": "💬 Chat With Bot",
     },
@@ -649,17 +653,27 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
     },
     "products_product_chat_intro": {
         "fa": (
-            "💬 گفتگو با AI — فقط دربارهٔ همین محصول.\n\n"
-            "همان قابلیت قبلی اینجاست: نکته، آموزش محصول، و به‌روز کردن دانش همین محصول.\n"
-            "از همین‌جا می‌توانید رفتار پاسخ به کاربر را هم یاد بدهید "
-            "(چند خط، ایموجی، لحن). این‌ها در فایل حافظه می‌ماند و Ask AI از آن‌ها استفاده می‌کند.\n"
-            "آموزش مخصوص کاتالوگ را از کلید «ارسال متن آموزشی برای ai» بفرستید."
+            "💬 گفتگو با AI — دسترسی کامل فعال شد.\n\n"
+            "می‌توانم همهٔ بخش‌های موجود را ویرایش کنم:\n"
+            "• اطلاعات اصلی (نام/سایت/کانال/گروه/پشتیبانی)\n"
+            "• پیام‌ها: کانال، گروه، اکانت، اکانت تست (اسلات‌ها، زمان، متن، قوانین، روشن/خاموش)\n"
+            "• پنل (آدرس/پورت/Inbound)\n"
+            "• سلامت روزانه / ادمین‌ها / ستون کیبورد\n"
+            "• ساخت کلید با کدنویسی AI (safe-change حدود ۱ دقیقه)\n"
+            "• آموزش محصول، و به‌روز کردن دانش تمام محصولات\n"
+            "• آموزش نحوهٔ رفتار پاسخ به کاربر (چند خط، ایموجی، لحن). "
+            "این‌ها در فایل حافظه می‌ماند و Ask AI از آن‌ها استفاده می‌کند.\n\n"
+            "آموزش مخصوص کاتالوگ را از «ارسال متن آموزشی برای ai» بفرستید."
         ),
         "en": (
-            "💬 Chat With AI — this product only.\n\n"
-            "The previous capability is still here: product tips, teaching, and updating this product.\n"
-            "You can also teach reply behavior (multi-line, emojis, tone). That is stored "
-            "in the memory file and used by Ask AI.\n"
+            "💬 Chat With AI — full access is on.\n\n"
+            "I can edit all existing sections:\n"
+            "• Owner info (name/site/channel/group/support)\n"
+            "• Messages: channel, group, account, test account\n"
+            "• Panel / daily health / admins / keyboard columns\n"
+            "• AI-coded buttons via safe-change (~1 min)\n"
+            "• Product teaching and updating knowledge for all products\n"
+            "• Reply behavior (multi-line, emojis, tone) stored for Ask AI\n\n"
             "Use Send AI training text only for catalog teaching."
         ),
     },
@@ -774,24 +788,29 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
     },
     "bot_chat_start": {
         "fa": (
-            "💬 گفتگو با ربات — دسترسی کامل به تنظیمات فعال شد.\n\n"
+            "💬 گفتگو با AI — دسترسی کامل فعال شد.\n\n"
             "می‌توانم همهٔ بخش‌های موجود را ویرایش کنم:\n"
             "• اطلاعات اصلی (نام/سایت/کانال/گروه/پشتیبانی)\n"
             "• پیام‌ها: کانال، گروه، اکانت، اکانت تست (اسلات‌ها، زمان، متن، قوانین، روشن/خاموش)\n"
             "• پنل (آدرس/پورت/Inbound)\n"
             "• سلامت روزانه / ادمین‌ها / ستون کیبورد\n"
-            "• ساخت کلید با کدنویسی AI (safe-change حدود ۱ دقیقه)\n\n"
+            "• ساخت کلید با کدنویسی AI (safe-change حدود ۱ دقیقه)\n"
+            "• آموزش محصول، و به‌روز کردن دانش تمام محصولات\n"
+            "• آموزش نحوهٔ رفتار پاسخ به کاربر (چند خط، ایموجی، لحن). "
+            "این‌ها در فایل حافظه می‌ماند و Ask AI از آن‌ها استفاده می‌کند.\n\n"
             "مثال: زمان اخبار کانال را ۱۰:۰۰ و ۱۷:۰۰ کن\n"
-            "مثال: کلید بساز: خلاصه وضعیت پنل برای ادمین\n\n"
+            "مثال: وقتی کاربر سؤال می‌کند چند خط بنویس و ایموجی بگذار\n\n"
             "برای پایان: بازگشت به تنظیمات."
         ),
         "en": (
-            "💬 Bot config chat — full settings access is on.\n\n"
+            "💬 Chat With AI — full access is on.\n\n"
             "I can edit all existing sections:\n"
-            "• Owner info\n"
-            "• Messages: channel/group/account/test slots\n"
-            "• Panel / health / admins / keyboard columns\n"
-            "• AI-coded buttons via safe-change (~1 min)\n\n"
+            "• Owner info (name/site/channel/group/support)\n"
+            "• Messages: channel, group, account, test account\n"
+            "• Panel / daily health / admins / keyboard columns\n"
+            "• AI-coded buttons via safe-change (~1 min)\n"
+            "• Product teaching and updating knowledge for all products\n"
+            "• Reply behavior (multi-line, emojis, tone) stored for Ask AI\n\n"
             "To exit: Back to Settings."
         ),
     },

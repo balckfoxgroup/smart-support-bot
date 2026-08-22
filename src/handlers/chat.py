@@ -180,11 +180,13 @@ def setup_chat_router(
             )
             return
 
-        # Local memory fast path — survives AI API changes
+        operator_style = behavior_rules_text(settings.knowledge_root, ask_product)
+        # Local memory fast path — skip when operator taught a reply style
         mem_hit = memory.lookup(text, lang=lang)
         if (
             mem_hit is not None
             and mem_hit.score >= 12.0
+            and not operator_style
             and not looks_unsure(mem_hit.answer)
             and not looks_incomplete_reply(mem_hit.answer)
             and not looks_like_reasoning_leak(mem_hit.answer)
@@ -284,19 +286,10 @@ def setup_chat_router(
             )
 
         facts = format_facts_from_meta(knowledge.index.facts or intents.facts)
-        operator_style = (
-            behavior_rules_text(settings.knowledge_root, ask_product)
-            if ask_product
-            else ""
-        )
         system = build_system_prompt(
             lang, facts_block=facts, operator_style=operator_style
         )
-        memory_snip = (
-            memory_prompt_block(settings.knowledge_root, ask_product)
-            if ask_product
-            else ""
-        )
+        memory_snip = memory_prompt_block(settings.knowledge_root, ask_product)
 
         md_priority_note = (
             "### Priority\n"
