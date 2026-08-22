@@ -163,6 +163,26 @@ _LABELS: dict[str, dict[Lang, str]] = {
         "fa": "💬 گفتگو با AI",
         "en": "💬 Chat With AI",
     },
+    "ai_chat_core": {
+        "fa": "📋 اطلاعات اصلی",
+        "en": "📋 Main settings",
+    },
+    "ai_chat_buttons": {
+        "fa": "🛠 ساخت کلید",
+        "en": "🛠 Build button",
+    },
+    "ai_chat_teach_product": {
+        "fa": "📚 آموزش محصول",
+        "en": "📚 Product teaching",
+    },
+    "ai_chat_teach_behavior": {
+        "fa": "🎭 آموزش رفتار",
+        "en": "🎭 Behavior teaching",
+    },
+    "ai_chat_all_products": {
+        "fa": "🌐 همه محصولات",
+        "en": "🌐 All products",
+    },
     "bot_config_chat_legacy": {
         "fa": "💬 گفتگو با ربات",
         "en": "💬 Chat With Bot",
@@ -788,31 +808,35 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
     },
     "bot_chat_start": {
         "fa": (
-            "💬 گفتگو با AI — دسترسی کامل فعال شد.\n\n"
-            "می‌توانم همهٔ بخش‌های موجود را ویرایش کنم:\n"
-            "• اطلاعات اصلی (نام/سایت/کانال/گروه/پشتیبانی)\n"
-            "• پیام‌ها: کانال، گروه، اکانت، اکانت تست (اسلات‌ها، زمان، متن، قوانین، روشن/خاموش)\n"
-            "• پنل (آدرس/پورت/Inbound)\n"
-            "• سلامت روزانه / ادمین‌ها / ستون کیبورد\n"
-            "• ساخت کلید با کدنویسی AI (safe-change حدود ۱ دقیقه)\n"
-            "• آموزش محصول، و به‌روز کردن دانش تمام محصولات\n"
-            "• آموزش نحوهٔ رفتار پاسخ به کاربر (چند خط، ایموجی، لحن). "
-            "این‌ها در فایل حافظه می‌ماند و Ask AI از آن‌ها استفاده می‌کند.\n\n"
-            "مثال: زمان اخبار کانال را ۱۰:۰۰ و ۱۷:۰۰ کن\n"
-            "مثال: وقتی کاربر سؤال می‌کند چند خط بنویس و ایموجی بگذار\n\n"
-            "برای پایان: بازگشت به تنظیمات."
+            "💬 گفتگو با AI — یک گزینه را انتخاب کنید:\n\n"
+            "📋 اطلاعات اصلی: نام/سایت/کانال/گروه/پشتیبانی، پیام‌ها، پنل، سلامت، ادمین، ستون کیبورد\n"
+            "🛠 ساخت کلید: ساخت کلید با کدنویسی AI\n"
+            "📚 آموزش محصول: دانش همان محصول (نه کاتالوگ محصول دیگر)\n"
+            "🎭 آموزش رفتار: چند خط، ایموجی، لحن — فقط برای محصول انتخاب‌شده"
         ),
         "en": (
-            "💬 Chat With AI — full access is on.\n\n"
-            "I can edit all existing sections:\n"
-            "• Owner info (name/site/channel/group/support)\n"
-            "• Messages: channel, group, account, test account\n"
-            "• Panel / daily health / admins / keyboard columns\n"
-            "• AI-coded buttons via safe-change (~1 min)\n"
-            "• Product teaching and updating knowledge for all products\n"
-            "• Reply behavior (multi-line, emojis, tone) stored for Ask AI\n\n"
-            "To exit: Back to Settings."
+            "💬 Chat With AI — pick one option:\n\n"
+            "📋 Main settings: owner, messages, panel, health, admins, keyboard\n"
+            "🛠 Build button: AI-coded button\n"
+            "📚 Product teaching: this product only\n"
+            "🎭 Behavior teaching: multi-line / emoji / tone for the chosen product"
         ),
+    },
+    "ai_chat_ask_product": {
+        "fa": "این آموزش برای کدام محصول است؟ یکی را بزنید، یا «همه محصولات».",
+        "en": "Which product is this teaching for? Tap one, or All products.",
+    },
+    "ai_chat_ask_behavior": {
+        "fa": "قانون رفتار همین محصول را بفرستید (مثلاً چند خط و ایموجی).",
+        "en": "Send the behavior rule for this product (e.g. multi-line and emojis).",
+    },
+    "ai_chat_ask_product_teach": {
+        "fa": "نکتهٔ آموزشی همین محصول را بفرستید. به کاتالوگ محصول دیگر ربط ندهید.",
+        "en": "Send the teaching note for this product only.",
+    },
+    "ai_chat_saved_targets": {
+        "fa": "✅ ذخیره شد در فایل همین محصول: {targets}",
+        "en": "✅ Saved on this product file: {targets}",
     },
     "scoped_rules_start": {
         "fa": (
@@ -1319,6 +1343,35 @@ def product_detail_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
         ],
         lang,
     )
+    return ReplyKeyboardMarkup(
+        keyboard=_chunk_rows(buttons),
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def ai_chat_hub_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
+    buttons = [
+        KeyboardButton(text=label("ai_chat_core", lang)),
+        KeyboardButton(text=label("ai_chat_buttons", lang)),
+        KeyboardButton(text=label("ai_chat_teach_product", lang)),
+        KeyboardButton(text=label("ai_chat_teach_behavior", lang)),
+        KeyboardButton(text=label("products_back", lang)),
+        KeyboardButton(text=label("settings_back", lang)),
+    ]
+    return ReplyKeyboardMarkup(
+        keyboard=_chunk_rows(buttons),
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def ai_chat_product_pick_keyboard(
+    labels: list[str], lang: str | None = "en"
+) -> ReplyKeyboardMarkup:
+    buttons = [KeyboardButton(text=x) for x in labels if x]
+    buttons.append(KeyboardButton(text=label("ai_chat_all_products", lang)))
+    buttons.append(KeyboardButton(text=label("products_back", lang)))
     return ReplyKeyboardMarkup(
         keyboard=_chunk_rows(buttons),
         resize_keyboard=True,

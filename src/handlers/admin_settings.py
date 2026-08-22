@@ -645,6 +645,31 @@ async def _show_training_hub(
     )
 
 
+async def _show_ai_chat_hub(
+    message: Message,
+    *,
+    bot_settings: BotSettingsStore,
+    uid: int,
+    lang: str,
+    product_id: str = "",
+    from_product: bool = False,
+) -> None:
+    await bot_settings.set_session(
+        uid,
+        {
+            "mode": "ai_chat_hub",
+            "product_id": product_id,
+            "from_product": from_product,
+            "ai_chat_all": False,
+            "ai_chat_task": "",
+        },
+    )
+    await message.answer(
+        ak.msg("bot_chat_start", lang),
+        reply_markup=ak.ai_chat_hub_keyboard(lang),
+    )
+
+
 def setup_admin_settings_router(
     users: UserStore,
     *,
@@ -732,6 +757,11 @@ def setup_admin_settings_router(
         | ak.texts("creator_contact")
         | ak.texts("bot_config_chat")
         | ak.texts("bot_config_chat_legacy")
+        | ak.texts("ai_chat_core")
+        | ak.texts("ai_chat_buttons")
+        | ak.texts("ai_chat_teach_product")
+        | ak.texts("ai_chat_teach_behavior")
+        | ak.texts("ai_chat_all_products")
         | ak.texts("build_catalogs")
         | ak.texts("products_hub")
         | ak.texts("products_add")
@@ -1071,6 +1101,10 @@ def setup_admin_settings_router(
                 "products_ai_training",
                 "products_ai_training_hub",
                 "product_ai_chat",
+                "ai_chat_hub",
+                "ai_chat_pick_product",
+                "ai_chat_teach_product",
+                "ai_chat_teach_behavior",
                 "catalog_enrich",
                 "catalog_enrich_note",
                 "catalog_source_wait",
@@ -1115,24 +1149,133 @@ def setup_admin_settings_router(
                 "catalog_enrich",
                 "product_ai_chat",
                 "bot_config_chat",
+                "ai_chat_hub",
                 "products_ai_training_hub",
             }
+            await _show_ai_chat_hub(
+                message,
+                bot_settings=bot_settings,
+                uid=uid,
+                lang=lang,
+                product_id=pid if from_product else "",
+                from_product=from_product,
+            )
+            return
+
+        if action in {
+            "ai_chat_core",
+            "ai_chat_buttons",
+            "ai_chat_teach_product",
+            "ai_chat_teach_behavior",
+            "ai_chat_all_products",
+        }:
+            sess = await bot_settings.get_session(uid)
+            pid = str(sess.get("product_id") or "").strip()
+            from_product = bool(sess.get("from_product"))
+            if action == "ai_chat_all_products":
+                task = str(sess.get("pending_task") or sess.get("ai_chat_task") or "")
+                mode = (
+                    "ai_chat_teach_behavior"
+                    if task == "behavior"
+                    else "ai_chat_teach_product"
+                )
+                await bot_settings.set_session(
+                    uid,
+                    {
+                        **sess,
+                        "mode": mode,
+                        "ai_chat_all": True,
+                        "product_id": "",
+                        "from_product": from_product,
+                    },
+                )
+                ask = (
+                    "ai_chat_ask_behavior"
+                    if mode == "ai_chat_teach_behavior"
+                    else "ai_chat_ask_product_teach"
+                )
+                await message.answer(
+                    ak.msg(ask, lang),
+                    reply_markup=ak.ai_chat_hub_keyboard(lang),
+                )
+                return
+            if action == "ai_chat_core":
+                await bot_settings.set_session(
+                    uid,
+                    {
+                        "mode": "bot_config_chat",
+                        "product_id": pid,
+                        "from_product": from_product,
+                        "ai_chat_task": "core",
+                        "history": [],
+                    },
+                )
+                await message.answer(
+                    (
+                        "اطلاعات اصلی: نام، سایت، کانال، گروه، پشتیبانی، پیام‌ها، پنل، سلامت، ادمین یا ستون کیبورد را بگویید."
+                        if (lang or "").startswith("fa")
+                        else "Main settings: send the change for owner, messages, panel, health, admins, or keyboard."
+                    ),
+                    reply_markup=ak.ai_chat_hub_keyboard(lang),
+                )
+                return
+            if action == "ai_chat_buttons":
+                await bot_settings.set_session(
+                    uid,
+                    {
+                        "mode": "bot_config_chat",
+                        "product_id": pid,
+                        "from_product": from_product,
+                        "ai_chat_task": "buttons",
+                        "history": [],
+                    },
+                )
+                await message.answer(
+                    (
+                        "ساخت کلید: مثلاً بنویسید «کلید بساز: خلاصه وضعیت پنل»."
+                        if (lang or "").startswith("fa")
+                        else "Build button: e.g. send “create button: panel status”."
+                    ),
+                    reply_markup=ak.ai_chat_hub_keyboard(lang),
+                )
+                return
+            task = "behavior" if action == "ai_chat_teach_behavior" else "product"
+            if not pid:
+                labels = _product_button_labels(settings.knowledge_root, lang)
+                await bot_settings.set_session(
+                    uid,
+                    {
+                        "mode": "ai_chat_pick_product",
+                        "pending_task": task,
+                        "from_product": from_product,
+                        "product_id": "",
+                        "ai_chat_all": False,
+                    },
+                )
+                await message.answer(
+                    ak.msg("ai_chat_ask_product", lang),
+                    reply_markup=ak.ai_chat_product_pick_keyboard(labels, lang),
+                )
+                return
+            mode = (
+                "ai_chat_teach_behavior" if task == "behavior" else "ai_chat_teach_product"
+            )
             await bot_settings.set_session(
                 uid,
                 {
-                    "mode": "bot_config_chat",
+                    "mode": mode,
                     "product_id": pid,
-                    "history": [],
                     "from_product": from_product,
+                    "ai_chat_all": False,
+                    "pending_task": task,
                 },
             )
             await message.answer(
-                ak.msg("bot_chat_start", lang),
-                reply_markup=(
-                    ak.product_detail_keyboard(lang)
-                    if from_product
-                    else ak.cancel_keyboard(lang)
+                ak.msg(
+                    "ai_chat_ask_behavior" if task == "behavior" else "ai_chat_ask_product_teach",
+                    lang,
                 ),
+                reply_markup=ak.ai_chat_hub_keyboard(lang),
             )
             return
 
@@ -1145,6 +1288,21 @@ def setup_admin_settings_router(
             sess = await bot_settings.get_session(uid)
             mode_now = str(sess.get("mode") or "")
             pid_now = str(sess.get("product_id") or "").strip()
+            if mode_now in {
+                "ai_chat_hub",
+                "ai_chat_pick_product",
+                "ai_chat_teach_product",
+                "ai_chat_teach_behavior",
+                "bot_config_chat",
+            }:
+                if sess.get("from_product") and pid_now:
+                    await bot_settings.set_session(
+                        uid, {"mode": "product_detail", "product_id": pid_now}
+                    )
+                    await _show_product_detail(message, settings, lang, pid_now)
+                    return
+                await _show_settings_hub(message, lang, bot_settings)
+                return
             if mode_now in {
                 "products_ai_training_hub",
                 "products_ai_training",
@@ -1259,18 +1417,13 @@ def setup_admin_settings_router(
                 await _show_products_hub(message, settings, lang)
                 return
             if action == "products_product_chat":
-                await bot_settings.set_session(
-                    uid,
-                    {
-                        "mode": "bot_config_chat",
-                        "product_id": pid,
-                        "history": [],
-                        "from_product": True,
-                    },
-                )
-                await message.answer(
-                    ak.msg("bot_chat_start", lang),
-                    reply_markup=ak.product_detail_keyboard(lang),
+                await _show_ai_chat_hub(
+                    message,
+                    bot_settings=bot_settings,
+                    uid=uid,
+                    lang=lang,
+                    product_id=pid,
+                    from_product=True,
                 )
                 return
             if action == "products_ai_training":
@@ -1770,6 +1923,10 @@ def setup_admin_settings_router(
             "products_ai_training",
             "products_ai_training_hub",
             "product_ai_chat",
+            "ai_chat_hub",
+            "ai_chat_pick_product",
+            "ai_chat_teach_product",
+            "ai_chat_teach_behavior",
         }:
             raise SkipHandler()
 
@@ -1843,6 +2000,113 @@ def setup_admin_settings_router(
             )
             await message.answer(ak.msg("saved_ok", lang))
             await _show_product_detail(message, settings, lang, pid)
+            return
+
+        if mode == "ai_chat_hub":
+            await message.answer(
+                ak.msg("bot_chat_start", lang),
+                reply_markup=ak.ai_chat_hub_keyboard(lang),
+            )
+            return
+
+        if mode == "ai_chat_pick_product":
+            if ak.resolve_action(text) == "ai_chat_all_products" or text == ak.label(
+                "ai_chat_all_products", lang
+            ):
+                task = str(sess.get("pending_task") or "product")
+                mode_next = (
+                    "ai_chat_teach_behavior" if task == "behavior" else "ai_chat_teach_product"
+                )
+                await bot_settings.set_session(
+                    uid,
+                    {
+                        **sess,
+                        "mode": mode_next,
+                        "ai_chat_all": True,
+                        "product_id": "",
+                    },
+                )
+                await message.answer(
+                    ak.msg(
+                        "ai_chat_ask_behavior" if task == "behavior" else "ai_chat_ask_product_teach",
+                        lang,
+                    ),
+                    reply_markup=ak.ai_chat_hub_keyboard(lang),
+                )
+                return
+            picked = _match_product_id_from_button(settings.knowledge_root, text)
+            if not picked:
+                labels = _product_button_labels(settings.knowledge_root, lang)
+                await message.answer(
+                    ak.msg("ai_chat_ask_product", lang),
+                    reply_markup=ak.ai_chat_product_pick_keyboard(labels, lang),
+                )
+                return
+            task = str(sess.get("pending_task") or "product")
+            mode_next = (
+                "ai_chat_teach_behavior" if task == "behavior" else "ai_chat_teach_product"
+            )
+            await bot_settings.set_session(
+                uid,
+                {
+                    **sess,
+                    "mode": mode_next,
+                    "product_id": picked,
+                    "ai_chat_all": False,
+                },
+            )
+            await message.answer(
+                ak.msg(
+                    "ai_chat_ask_behavior" if task == "behavior" else "ai_chat_ask_product_teach",
+                    lang,
+                ),
+                reply_markup=ak.ai_chat_hub_keyboard(lang),
+            )
+            return
+
+        if mode in {"ai_chat_teach_behavior", "ai_chat_teach_product"}:
+            from src.knowledge.ai_memory import append_operator_teaching
+
+            kind = "behavior" if mode == "ai_chat_teach_behavior" else "fact"
+            all_products = bool(sess.get("ai_chat_all"))
+            pid = str(sess.get("product_id") or "").strip()
+            if not all_products and not pid:
+                labels = _product_button_labels(settings.knowledge_root, lang)
+                sess["mode"] = "ai_chat_pick_product"
+                sess["pending_task"] = "behavior" if kind == "behavior" else "product"
+                await bot_settings.set_session(uid, sess)
+                await message.answer(
+                    ak.msg("ai_chat_ask_product", lang),
+                    reply_markup=ak.ai_chat_product_pick_keyboard(labels, lang),
+                )
+                return
+            targets = append_operator_teaching(
+                settings.knowledge_root,
+                pid,
+                text,
+                kind=kind,
+                all_products=all_products,
+            )
+            notify_knowledge_changed()
+            await audit.write(
+                "ai_chat_teach",
+                admin_id=uid,
+                detail=f"{kind}:{','.join(targets) or 'none'}",
+            )
+            await message.answer(
+                ak.msg("ai_chat_saved_targets", lang).format(
+                    targets=", ".join(targets) or "—"
+                ),
+                reply_markup=ak.ai_chat_hub_keyboard(lang),
+            )
+            await _show_ai_chat_hub(
+                message,
+                bot_settings=bot_settings,
+                uid=uid,
+                lang=lang,
+                product_id=pid if not all_products else "",
+                from_product=bool(sess.get("from_product")),
+            )
             return
 
         if mode == "products_ai_training_hub":
@@ -2246,33 +2510,6 @@ def setup_admin_settings_router(
         if mode in {"bot_config_chat", "product_ai_chat"}:
             if ai is None:
                 await message.answer("AI unavailable.")
-                return
-            from src.knowledge.ai_memory import append_operator_teaching, is_behavior_text
-
-            teach_pid = str(sess.get("product_id") or "").strip()
-            if is_behavior_text(text):
-                append_operator_teaching(
-                    settings.knowledge_root,
-                    teach_pid,
-                    text,
-                    kind="behavior",
-                )
-                notify_knowledge_changed()
-                await audit.write("ai_behavior_teach", admin_id=uid, detail=teach_pid or "_global")
-                kb = (
-                    ak.product_detail_keyboard(lang)
-                    if sess.get("from_product") or teach_pid
-                    else ak.cancel_keyboard(lang)
-                )
-                await message.answer(
-                    (
-                        "✅ قانون رفتار در فایل حافظهٔ سراسری ذخیره شد.\n"
-                        "Ask AI از این به بعد باید چندخطی و با ایموجی جواب بدهد."
-                        if (lang or "").startswith("fa")
-                        else "✅ Behavior rule saved globally. Ask AI will use it on the next question."
-                    ),
-                    reply_markup=kb,
-                )
                 return
             lowered = text.lower()
             if any(k in lowered for k in ("سازنده", "creator_contact", "creator contact")):
@@ -2949,39 +3186,11 @@ def setup_admin_settings_router(
                     await _show_control_home(message, control, lang)
                     return
 
-            if not result.applied and not result.open_section:
-                teach_words = (
-                    "محصول",
-                    "آموزش",
-                    "کاتالوگ",
-                    "کاربر",
-                    "product",
-                    "teach",
-                    "catalog",
-                )
-                if any(w in text for w in teach_words) or sess.get("from_product"):
-                    append_operator_teaching(
-                        settings.knowledge_root,
-                        teach_pid,
-                        text,
-                        kind="fact",
-                        all_products=not teach_pid,
-                    )
-                    notify_knowledge_changed()
-                    extra = (
-                        "\n\n✅ نکتهٔ محصول در فایل حافظه ذخیره شد."
-                        if (lang or "").startswith("fa")
-                        else "\n\n✅ Product note saved to memory."
-                    )
-                    clean = ((clean or "") + extra).strip()
-
             if result.show_settings_keyboard:
                 await bot_settings.set_session(uid, {"mode": "settings"})
                 kb = await _settings_kb(lang, bot_settings)
-            elif sess.get("from_product") or teach_pid:
-                kb = ak.product_detail_keyboard(lang)
             else:
-                kb = ak.cancel_keyboard(lang)
+                kb = ak.ai_chat_hub_keyboard(lang)
             await message.answer(
                 (clean or ak.msg("saved_ok", lang))[:3900],
                 reply_markup=kb,

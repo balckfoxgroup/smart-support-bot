@@ -28,6 +28,7 @@ from src.knowledge.ai_memory import (
     append_learned_answer,
     behavior_rules_text,
     memory_prompt_block,
+    product_memory_has_content,
 )
 from src.knowledge.catalog_index import listed_image_paths, wants_send_media
 from src.knowledge.catalog_rag import retrieve_catalog_context
@@ -181,12 +182,11 @@ def setup_chat_router(
             return
 
         operator_style = behavior_rules_text(settings.knowledge_root, ask_product)
-        # Local memory fast path — skip when operator taught a reply style
-        mem_hit = memory.lookup(text, lang=lang)
+        # Product-scoped Ask AI must not reuse answers from another catalog.
+        mem_hit = None if ask_product else memory.lookup(text, lang=lang)
         if (
             mem_hit is not None
             and mem_hit.score >= 12.0
-            and not operator_style
             and not looks_unsure(mem_hit.answer)
             and not looks_incomplete_reply(mem_hit.answer)
             and not looks_like_reasoning_leak(mem_hit.answer)
@@ -204,10 +204,12 @@ def setup_chat_router(
                 await message.answer(final, reply_markup=ask_kb)
             return
 
-        match = intents.match(text, lang, prior_blob=history_blob)
+        match = None if ask_product else intents.match(text, lang, prior_blob=history_blob)
 
         if (
-            retrieval.insufficient
+            not ask_product
+            and retrieval.insufficient
+            and match is not None
             and match.low_confidence
             and match.clarifying_question
         ):
@@ -222,8 +224,8 @@ def setup_chat_router(
 
         wait = await message.answer(texts.t(texts.THINKING, lang))
 
-        intent_name = match.record.intent if match.record else None
-        faq_refs = match.record.faq_refs if match.record else None
+        intent_name = match.record.intent if match and match.record else None
+        faq_refs = None if ask_product else (match.record.faq_refs if match and match.record else None)
 
         kb_limit = settings.knowledge_snippet_chars
         if retrieval.insufficient:
@@ -265,7 +267,7 @@ def setup_chat_router(
             logger.exception("site search failed")
 
         intent_block = ""
-        if match.record and not ask_product:
+        if match and match.record and not ask_product:
             intent_block = join_context_blocks(
                 [
                     f"Matched intent: {match.record.intent} (score={match.score:.2f})",
@@ -275,16 +277,6 @@ def setup_chat_router(
                 ],
                 3500,
             )
-        elif match.record and ask_product:
-            # Soft intent hint only — do not let other-product intents override scope
-            intent_block = join_context_blocks(
-                [
-                    f"Optional intent hint (may ignore if off-product): {match.record.intent}",
-                    f"Short: {match.record.short_answer}",
-                ],
-                1200,
-            )
-
         facts = format_facts_from_meta(knowledge.index.facts or intents.facts)
         system = build_system_prompt(
             lang, facts_block=facts, operator_style=operator_style
@@ -314,7 +306,9 @@ def setup_chat_router(
         history_section = history_blob or "(none)"
         product_scope = (
             f"Product catalog scope: {ask_product}\n"
-            "Answer only within this product. Do not mix other products.\n\n"
+            "Answer ONLY from this product's catalog and this product's AI_BEHAVIOR.md.\n"
+            "If those sources lack the fact, say you do not know. "
+            "Do not use another product catalog. Do not invent steps.\n\n"
             if ask_product
             else ""
         )
@@ -365,7 +359,7 @@ def setup_chat_router(
                 ).strip()
             if not fallback and (kb_snip or "").strip():
                 fallback = kb_snip.strip()[:1200]
-            if not fallback and match.record:
+            if not fallback and not ask_product and match and match.record:
                 fallback = (
                     (match.record.full_answer or "").strip()
                     or (match.record.short_answer or "").strip()
@@ -397,7 +391,7 @@ def setup_chat_router(
                 fallback = "\n\n".join(
                     u.body for u in retrieval.units if (u.body or "").strip()
                 ).strip()
-            if not fallback and match.record:
+            if not fallback and not ask_product and match and match.record:
                 fallback = (
                     (match.record.full_answer or "").strip()
                     or (match.record.short_answer or "").strip()

@@ -51,9 +51,16 @@ class AIMemory:
     learned: list[tuple[str, str]] = field(default_factory=list)
 
 
+def _safe_pid(product_id: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9._-]+", "-", (product_id or "").strip()).strip("-") or "product"
+
+
 def memory_md_path(knowledge_root: Path, product_id: str) -> Path:
-    safe = re.sub(r"[^a-zA-Z0-9._-]+", "-", (product_id or "").strip()).strip("-") or "product"
-    return knowledge_root / "product_guides" / f"{safe}-ai-memory.md"
+    return knowledge_root / "product_guides" / f"{_safe_pid(product_id)}-ai-memory.md"
+
+
+def behavior_md_path(knowledge_root: Path, product_id: str) -> Path:
+    return knowledge_root / "product_guides" / f"{_safe_pid(product_id)}-AI_BEHAVIOR.md"
 
 
 def is_behavior_text(text: str) -> bool:
@@ -141,18 +148,25 @@ def _dedupe_append(items: list[str], text: str, *, limit: int) -> list[str]:
     return items[-limit:]
 
 
-def _write_behavior_sidecar(knowledge_root: Path) -> None:
-    mem = load_ai_memory(knowledge_root, GLOBAL_ID)
-    lines = [x for x in mem.behavior if x]
-    path = knowledge_root / "AI_BEHAVIOR.md"
+def write_product_behavior_md(knowledge_root: Path, product_id: str) -> Path:
+    """Write this product's AI_BEHAVIOR.md immediately (no other products)."""
+    pid = (product_id or "").strip()
+    mem = load_ai_memory(knowledge_root, pid)
+    path = behavior_md_path(knowledge_root, pid)
     path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [x for x in mem.behavior if x]
+    facts = [x for x in mem.facts if x]
     path.write_text(
-        "# Ask AI behavior (authoritative)\n\n"
-        "Follow these rules in every Ask AI reply.\n\n"
+        f"# AI_BEHAVIOR for {pid}\n\n"
+        "This file is only for this product. Do not use another catalog.\n\n"
+        "## Behavior\n"
         + ("\n".join(f"- {x}" for x in lines) if lines else "- (none yet)")
+        + "\n\n## Product teaching\n"
+        + ("\n".join(f"- {x}" for x in facts) if facts else "- (none yet)")
         + "\n",
         encoding="utf-8",
     )
+    return path
 
 
 def append_operator_teaching(
@@ -162,26 +176,23 @@ def append_operator_teaching(
     *,
     kind: str | None = None,
     all_products: bool = False,
-) -> str:
-    """Store operator chat/training. Behavior is always global. Returns kind."""
+) -> list[str]:
+    """Store teaching on the chosen product(s) only. Returns target ids."""
     decided = kind or ("behavior" if is_behavior_text(text) else "fact")
     targets: list[str] = []
-    if decided == "behavior":
-        targets = [GLOBAL_ID]
-        pid = (product_id or "").strip()
-        if pid and pid != GLOBAL_ID:
-            targets.append(pid)
-    elif all_products or not (product_id or "").strip():
+    if all_products:
         try:
             from src.knowledge.product_catalogs import get_product_catalogs
 
-            targets = [c.product_id for c in get_product_catalogs()] or [GLOBAL_ID]
+            targets = [c.product_id for c in get_product_catalogs()]
         except Exception:  # noqa: BLE001
-            targets = [GLOBAL_ID]
-        if GLOBAL_ID not in targets:
-            targets.append(GLOBAL_ID)
+            targets = []
     else:
-        targets = [(product_id or "").strip() or GLOBAL_ID]
+        pid = (product_id or "").strip()
+        if pid and pid != GLOBAL_ID:
+            targets = [pid]
+    if not targets:
+        return []
     for target in targets:
         mem = load_ai_memory(knowledge_root, target)
         if decided == "behavior":
@@ -189,9 +200,8 @@ def append_operator_teaching(
         else:
             mem.facts = _dedupe_append(mem.facts, text, limit=50)
         save_ai_memory(knowledge_root, target, mem)
-    if decided == "behavior":
-        _write_behavior_sidecar(knowledge_root)
-    return decided
+        write_product_behavior_md(knowledge_root, target)
+    return targets
 
 
 def set_catalog_teaching(knowledge_root: Path, product_id: str, text: str) -> None:
@@ -244,44 +254,36 @@ def seed_memory_from_product(knowledge_root: Path, product_id: str) -> None:
 
 def behavior_rules_text(knowledge_root: Path, product_id: str | None = None) -> str:
     pid = (product_id or "").strip()
-    if pid:
-        seed_memory_from_product(knowledge_root, pid)
-    rules: list[str] = []
-    seen: set[str] = set()
-    extras: list[str] = [GLOBAL_ID]
-    if pid:
-        extras.append(pid)
-    guides = knowledge_root / "product_guides"
-    if guides.is_dir():
-        for path in guides.glob("*-ai-memory.md"):
-            extras.append(path.name[: -len("-ai-memory.md")])
-    for target in extras:
-        if not target:
-            continue
-        for item in load_ai_memory(knowledge_root, target).behavior:
-            key = item.strip()
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            rules.append(key)
+    if not pid or pid == GLOBAL_ID:
+        return ""
+    seed_memory_from_product(knowledge_root, pid)
+    rules = [x.strip() for x in load_ai_memory(knowledge_root, pid).behavior if x.strip()]
     return "\n".join(f"- {x}" for x in rules)
+
+
+def product_memory_has_content(knowledge_root: Path, product_id: str | None) -> bool:
+    pid = (product_id or "").strip()
+    if not pid:
+        return False
+    mem = load_ai_memory(knowledge_root, pid)
+    return bool(mem.behavior or mem.facts or mem.catalog or mem.learned)
 
 
 def memory_prompt_block(
     knowledge_root: Path, product_id: str | None = None, *, limit: int = 4500
 ) -> str:
     pid = (product_id or "").strip()
-    if pid:
-        seed_memory_from_product(knowledge_root, pid)
+    if not pid or pid == GLOBAL_ID:
+        return ""
+    seed_memory_from_product(knowledge_root, pid)
     parts: list[str] = [
-        "### Operator AI memory (CHECK FIRST — before catalog)\n"
-        "Follow Behavior rules (Chat with AI) for tone/format in EVERY reply.\n"
-        "If a learned Q matches, reuse it. Else catalog teaching, then the catalog."
+        f"### Operator AI memory for product_id={pid} ONLY\n"
+        "Do not use another product catalog. If this file and this product catalog "
+        "lack the fact, say you do not know. Never invent."
     ]
-    for target in (GLOBAL_ID, pid):
-        if not target:
-            continue
-        path = memory_md_path(knowledge_root, target)
+    mem_path = memory_md_path(knowledge_root, pid)
+    beh_path = behavior_md_path(knowledge_root, pid)
+    for path in (beh_path, mem_path):
         if not path.is_file():
             continue
         try:
@@ -290,10 +292,4 @@ def memory_prompt_block(
             continue
         if raw:
             parts.append(raw)
-    sidecar = knowledge_root / "AI_BEHAVIOR.md"
-    if sidecar.is_file():
-        try:
-            parts.append(sidecar.read_text(encoding="utf-8").strip())
-        except OSError:
-            pass
     return "\n\n".join(parts)[:limit] if len(parts) > 1 else ""
