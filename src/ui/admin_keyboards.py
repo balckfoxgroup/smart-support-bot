@@ -768,15 +768,19 @@ _UI_MSGS: dict[str, dict[Lang, str]] = {
     },
     "products_ask_training": {
         "fa": (
-            "ویرایش متن آموزشی کاتالوگ.\n"
+            "ویرایش متن آموزشی کاتالوگ — ذخیره جایگزین متن قبلی می‌شود.\n"
             "متن فعلی:\n{saved}\n\n"
-            "متن جدید را بفرستید تا به ادامهٔ همین متن اضافه شود."
+            "متن کامل جدید را بفرستید."
         ),
         "en": (
-            "Edit catalog training text.\n"
+            "Edit catalog training text — saving replaces the previous text.\n"
             "Current text:\n{saved}\n\n"
-            "Send the new text; it will be appended to the current text."
+            "Send the full new text."
         ),
+    },
+    "products_ask_training_append": {
+        "fa": "متن آموزشی جدید را بفرستید. به ادامهٔ متن قبلی اضافه می‌شود.",
+        "en": "Send the new training text. It will be appended to the previous text.",
     },
     "products_training_hub": {
         "fa": (
@@ -1389,6 +1393,7 @@ def ai_chat_product_pick_keyboard(
 
 def training_hub_keyboard(lang: str | None = "en") -> ReplyKeyboardMarkup:
     buttons = [
+        KeyboardButton(text=label("products_ai_training", lang)),
         KeyboardButton(text=label("products_ai_training_edit", lang)),
         KeyboardButton(text=label("products_ai_training_delete", lang)),
         KeyboardButton(text=label("products_back", lang)),

@@ -204,10 +204,116 @@ def wants_contact_links(text: str) -> bool:
     return any(k in lowered for k in CONTACT_KEYWORDS)
 
 
+_PROMPT_DUMP_MARKERS = (
+    "<!-- begin",
+    "<!-- end behavior",
+    "<!-- end catalog",
+    "<!-- end facts",
+    "operator ai memory for product_id",
+    "never invent steps",
+    "official product catalog (scoped",
+    "operator training notes (authoritative",
+    "## catalog teaching",
+    "## behavior rules",
+    "## operator facts",
+    "# ai_behavior",
+    "# ai memory",
+    "this file survives agent",
+    "product catalog scope:",
+    "expanded topic hints (internal)",
+    "write a helpful telegram support reply",
+    "matched intent:",
+    "knowledge / product-map",
+)
+
+
+_INTERNAL_LINE = re.compile(
+    r"(?is)^\s*(?:"
+    r"<!--|"
+    r"#{1,3}\s*(?:ai[_\s-]*memory|ai_behavior|behavior rules|operator facts|"
+    r"catalog teaching|product teaching|priority|operator ai memory)\b|"
+    r"never invent|"
+    r"do not use another product|"
+    r"operator ai memory|"
+    r"official product catalog|"
+    r"operator training notes|"
+    r"this file survives|"
+    r"use only for this product|"
+    r"product catalog scope|"
+    r"answer only from this product|"
+    r"matched intent:"
+    r")"
+)
+
+
+def excerpt_teaching_for_query(text: str, query: str, *, limit: int = 900) -> str:
+    """Pick the teaching sections that match the question; never return a prompt dump."""
+    raw = strip_internal_prompt_lines(text)
+    if not raw or looks_like_prompt_dump(raw):
+        return ""
+    parts = re.split(
+        r"\n(?=\s*(?:\d+[\.\)]|[\u06F0-\u06F9]+[\.\)]|[A-Z][^\n]{0,40}:)\s)",
+        raw,
+    )
+    if len(parts) <= 1:
+        parts = [p.strip() for p in re.split(r"\n{2,}", raw) if p.strip()]
+    q_tokens = {
+        t
+        for t in re.findall(r"[\w\u0600-\u06FF]{3,}", (query or "").lower())
+        if t not in {"چه", "جوری", "چطور", "چگونه", "کار", "میکنه", "میکند", "است"}
+    }
+    scored: list[tuple[int, str]] = []
+    for part in parts:
+        part = part.strip()
+        if len(part) < 24:
+            continue
+        low = part.lower()
+        score = sum(2 for tok in q_tokens if tok in low)
+        scored.append((score, part))
+    if not scored:
+        return raw[:limit].strip()
+    scored.sort(key=lambda item: (-item[0], -len(item[1])))
+    matched = [p for s, p in scored if s > 0]
+    pool = matched[:3] if matched else [p for _, p in scored[:2]]
+    chosen: list[str] = []
+    total = 0
+    for part in pool:
+        if chosen and total + len(part) > limit:
+            break
+        chosen.append(part)
+        total += len(part)
+    return "\n\n".join(chosen).strip()[:limit]
+
+
+def strip_internal_prompt_lines(text: str) -> str:
+    """Drop prompt/memory headers so leftover catalog notes can be shown."""
+    kept: list[str] = []
+    for line in (text or "").splitlines():
+        if "<!--" in line:
+            continue
+        if _INTERNAL_LINE.search(line):
+            continue
+        kept.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+
+
+def looks_like_prompt_dump(text: str) -> bool:
+    """True when internal Ask AI prompt/memory was echoed to the user."""
+    raw = (text or "").strip().lower()
+    if not raw:
+        return False
+    if "<!-- begin" in raw or "<!-- end" in raw:
+        return True
+    hits = sum(1 for m in _PROMPT_DUMP_MARKERS if m in raw)
+    return hits >= 2
+
+
 def looks_like_reasoning_leak(text: str) -> bool:
     """True when the model dumped internal thinking instead of a user reply."""
     raw = (text or "").strip()
     if not raw:
+        return True
+    if looks_like_prompt_dump(raw):
         return True
     lowered = raw.lower()
     hits = sum(1 for p in _REASONING_LEAK_PHRASES if p in lowered)

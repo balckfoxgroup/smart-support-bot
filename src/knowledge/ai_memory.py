@@ -232,26 +232,44 @@ def set_catalog_teaching(knowledge_root: Path, product_id: str, text: str) -> No
     write_catalog_training_md(knowledge_root, product_id, mem.catalog)
 
 
-def append_catalog_training(knowledge_root: Path, product_id: str, new_text: str) -> str:
-    """Append new catalog teaching to the product JSON + markdown. Returns full text."""
+def get_catalog_training(knowledge_root: Path, product_id: str) -> str:
+    """Source of truth: product JSON ai_training_text. Markdown is cache only."""
     pid = (product_id or "").strip()
-    add = (new_text or "").strip()
+    if not pid:
+        return ""
+    from src.knowledge.product_catalogs import load_product_raw
+
+    raw = load_product_raw(knowledge_root, pid) or {}
+    train = str(raw.get("ai_training_text") or "").strip()
+    if train:
+        return train
+    return load_ai_memory(knowledge_root, pid).catalog.strip()
+
+
+def replace_catalog_training(knowledge_root: Path, product_id: str, text: str) -> str:
+    """Replace catalog teaching in JSON; markdown is write-through cache."""
+    pid = (product_id or "").strip()
+    combined = (text or "").strip()
     from src.knowledge.product_catalogs import load_product_raw, save_product_raw
 
     raw = load_product_raw(knowledge_root, pid) or {}
-    prev = str(raw.get("ai_training_text") or "").strip()
-    if not prev:
-        prev = catalog_teaching_text(knowledge_root, pid)
-    combined = (prev + "\n\n" + add).strip() if prev and add else (add or prev)
     raw["ai_training_text"] = combined
     save_product_raw(knowledge_root, pid, raw)
     set_catalog_teaching(knowledge_root, pid, combined)
     return combined
 
 
+def append_catalog_training(knowledge_root: Path, product_id: str, new_text: str) -> str:
+    """Append new catalog teaching to the product JSON. Returns full text."""
+    pid = (product_id or "").strip()
+    add = (new_text or "").strip()
+    prev = get_catalog_training(knowledge_root, pid)
+    combined = (prev + "\n\n" + add).strip() if prev and add else (add or prev)
+    return replace_catalog_training(knowledge_root, pid, combined)
+
+
 def catalog_teaching_text(knowledge_root: Path, product_id: str) -> str:
-    seed_memory_from_product(knowledge_root, product_id)
-    return load_ai_memory(knowledge_root, product_id).catalog.strip()
+    return get_catalog_training(knowledge_root, product_id)
 
 
 def append_learned_answer(
@@ -272,29 +290,27 @@ def append_learned_answer(
 
 
 def seed_memory_from_product(knowledge_root: Path, product_id: str) -> None:
-    """Copy older JSON training into the md file once, so a new agent still sees it."""
+    """Copy catalog JSON training into memory if the catalog slot is empty."""
     pid = (product_id or "").strip()
     if not pid:
         return
     mem = load_ai_memory(knowledge_root, pid)
-    if mem.catalog or mem.behavior or mem.facts or mem.learned:
-        return
     try:
         from src.knowledge.product_catalogs import load_product_raw
     except Exception:  # noqa: BLE001
         return
     raw = load_product_raw(knowledge_root, pid) or {}
     train = str(raw.get("ai_training_text") or "").strip()
-    if train:
+    if train and not mem.catalog:
         mem.catalog = train
         save_ai_memory(knowledge_root, pid, mem)
+        write_catalog_training_md(knowledge_root, pid, train)
 
 
 def behavior_rules_text(knowledge_root: Path, product_id: str | None = None) -> str:
     pid = (product_id or "").strip()
     if not pid or pid == GLOBAL_ID:
         return ""
-    seed_memory_from_product(knowledge_root, pid)
     rules = [x.strip() for x in load_ai_memory(knowledge_root, pid).behavior if x.strip()]
     return "\n".join(f"- {x}" for x in rules)
 
@@ -313,7 +329,6 @@ def memory_prompt_block(
     pid = (product_id or "").strip()
     if not pid or pid == GLOBAL_ID:
         return ""
-    seed_memory_from_product(knowledge_root, pid)
     parts: list[str] = [
         f"### Operator AI memory for product_id={pid} ONLY\n"
         "Do not use another product catalog. If this file and this product catalog "
@@ -321,7 +336,8 @@ def memory_prompt_block(
     ]
     mem_path = memory_md_path(knowledge_root, pid)
     beh_path = behavior_md_path(knowledge_root, pid)
-    for path in (beh_path, mem_path):
+    train_path = catalog_training_md_path(knowledge_root, pid)
+    for path in (beh_path, mem_path, train_path):
         if not path.is_file():
             continue
         try:

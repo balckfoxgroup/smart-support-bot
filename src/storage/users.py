@@ -146,6 +146,7 @@ class UserStore:
                     entry["ask_ai_product_id"] = ""
             else:
                 entry.pop("ask_ai_product_id", None)
+                entry.pop("last_ask_context", None)
                 entry["chat_history"] = []
             users[key] = entry
             self._save_sync()
@@ -279,6 +280,25 @@ class UserStore:
     async def was_group_invited(self, user_id: int) -> bool:
         async with self._lock:
             return bool(self._get_user(user_id).get("group_invited"))
+
+    async def get_last_ask_context(self, user_id: int) -> dict[str, Any] | None:
+        async with self._lock:
+            raw = self._get_user(user_id).get("last_ask_context")
+            return dict(raw) if isinstance(raw, dict) else None
+
+    async def set_last_ask_context(
+        self, user_id: int, context: dict[str, Any] | None
+    ) -> None:
+        key = str(user_id)
+        async with self._lock:
+            users = self._data.setdefault("users", {})
+            entry = dict(self._get_user(user_id))
+            if context:
+                entry["last_ask_context"] = context
+            else:
+                entry.pop("last_ask_context", None)
+            users[key] = entry
+            self._save_sync()
 
     async def append_chat(
         self, user_id: int, role: str, content: str, *, limit: int = 8

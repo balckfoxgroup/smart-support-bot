@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 
 from aiogram import F, Router
 from aiogram.types import Message
@@ -15,27 +17,45 @@ from src.ai.persona import (
     download_or_site_fallback,
     format_facts_from_meta,
     join_context_blocks,
+    excerpt_teaching_for_query,
     looks_incomplete_reply,
+    looks_like_prompt_dump,
     looks_like_reasoning_leak,
     sanitize_reply_links,
-    strip_reasoning_leak,
+    strip_internal_prompt_lines,
     wants_contact_links,
     wants_sales_nudge,
+)
+from src.ai.safety import (
+    ResponseBudget,
+    is_safe_to_persist,
+    is_transient_ai_error,
+    prepare_user_reply,
 )
 from src.access import AdminAccess
 from src.config import Settings, is_bot_admin
 from src.knowledge.ai_memory import (
     append_learned_answer,
     behavior_rules_text,
+    catalog_teaching_text,
     memory_prompt_block,
     product_memory_has_content,
 )
-from src.knowledge.catalog_index import listed_image_paths, wants_send_media
+from src.knowledge.catalog_index import wants_send_media
 from src.knowledge.catalog_rag import retrieve_catalog_context
+from src.knowledge.response_bundle import (
+    MediaRef,
+    ResponseBundle,
+    existing_media_paths,
+)
 from src.knowledge.catalog_search import CatalogSiteSearch, looks_unsure, unsure_handoff
 from src.knowledge.intents import IntentMatcher, looks_identity
 from src.knowledge.loader import KnowledgeLoader
-from src.knowledge.product_catalogs import ai_products_snippet
+from src.knowledge.product_catalogs import (
+    ai_products_snippet,
+    get_product,
+    list_all_product_dicts,
+)
 from src.storage.answer_memory import AnswerMemoryStore
 from src.storage.metrics import MetricsStore
 from src.storage.users import UserStore
@@ -44,6 +64,53 @@ from src.ui import admin_keyboards, keyboards, messaging, texts
 logger = logging.getLogger(__name__)
 
 router = Router(name="chat")
+
+
+class _AskTiming:
+    def __init__(self) -> None:
+        self.t0 = time.monotonic()
+        self.last = self.t0
+        self.parts: list[str] = []
+
+    def mark(self, name: str) -> None:
+        now = time.monotonic()
+        self.parts.append(f"{name}={int((now - self.last) * 1000)}")
+        self.last = now
+
+    def flush(self) -> None:
+        total = int((time.monotonic() - self.t0) * 1000)
+        logger.info("ask_ai_timing total_ms=%s %s", total, " ".join(self.parts))
+
+
+def _bundle_from_retrieval(
+    product_id: str, query: str, retrieval
+) -> ResponseBundle:
+    refs: list[MediaRef] = []
+    for unit in getattr(retrieval, "media_units", None) or []:
+        rel = str(getattr(unit, "media_path", "") or "").strip()
+        pid = str(getattr(unit, "product_id", "") or "").strip()
+        if not rel or not pid:
+            continue
+        refs.append(
+            MediaRef(
+                path=rel,
+                product_id=pid,
+                unit_id=str(getattr(unit, "unit_id", "") or ""),
+                feature_ids=list(getattr(unit, "feature_ids", None) or []),
+                score=float(getattr(unit, "score", 0.0) or 0.0),
+            )
+        )
+    return ResponseBundle(
+        product_id=product_id or "",
+        user_query=query,
+        knowledge_refs=[
+            str(u.unit_id)
+            for u in (getattr(retrieval, "units", None) or [])
+            if getattr(u, "unit_id", None)
+        ]
+        + [r.unit_id for r in refs if r.unit_id],
+        media_refs=refs,
+    )
 
 
 def _is_free_text(message: Message) -> bool:
@@ -143,42 +210,68 @@ def setup_chat_router(
             return
 
         ask_product = await users.get_ask_ai_product(user.id)
+        if ask_product:
+            row = next(
+                (
+                    d
+                    for d in list_all_product_dicts(settings.knowledge_root)
+                    if str(d.get("product_id") or "") == ask_product
+                ),
+                None,
+            )
+            if row is None or row.get("enabled", True) is False:
+                await message.answer(
+                    "این محصول دیگر در دسترس نیست. از منو دوباره «سوال از AI» را برای یک محصول فعال بزنید."
+                    if (lang or "").startswith("fa")
+                    else "This product is no longer available. Open Ask AI again from an active product.",
+                    reply_markup=keyboards.main_menu_keyboard(lang),
+                )
+                return
         ask_kb = keyboards.ask_ai_keyboard(lang, product_id=ask_product)
+        stages = _AskTiming()
         history = await users.get_chat_history(user.id)
         history_blob = "\n".join(
-            f"{h['role']}: {h['content']}" for h in history[-8:]
+            f"{h['role']}: {h['content']}"
+            for h in history[-4:]
+            if not looks_like_prompt_dump(str(h.get("content") or ""))
         )
-        retrieval = retrieve_catalog_context(
-            text,
-            lang=lang,
-            project_root=settings.project_root,
-            limit_features=4,
-            limit_media=4 if wants_send_media(text) else 2,
-            product_id=ask_product,
-            prior_text=history_blob,
-        )
-        media_paths = list(retrieval.media_paths) if retrieval.attach_media else []
-        if wants_send_media(text) and not media_paths and ask_product:
-            media_paths = listed_image_paths(
-                settings.project_root, ask_product, limit=4
-            )
+        stages.mark("session")
 
-        if wants_send_media(text) and media_paths:
-            caption = (
-                "تصویر کاتالوگ همین محصول — از فایل‌های ذخیره‌شده ارسال شد."
+        if wants_send_media(text):
+            last = ResponseBundle.from_dict(await users.get_last_ask_context(user.id))
+            pid = (ask_product or (last.product_id if last else "") or "").strip()
+            paths = []
+            if last and pid and last.product_id == pid:
+                paths = existing_media_paths(
+                    last.media_refs,
+                    product_id=pid,
+                    knowledge_refs=last.knowledge_refs,
+                    project_root=settings.project_root,
+                    limit=2,
+                )
+            if paths:
+                caption = (
+                    "تصویر همان بخشی که الان درباره‌اش صحبت شد."
+                    if (lang or "").startswith("fa")
+                    else "Photo for the section we just discussed."
+                )
+                await users.append_chat(user.id, "user", text)
+                await users.append_chat(user.id, "assistant", caption)
+                await metrics.record_answered(referred_support=False, ai_solved=True)
+                await messaging.answer_with_media(
+                    message, caption, images=paths, reply_markup=ask_kb
+                )
+                stages.mark("followup_media")
+                stages.flush()
+                return
+            await message.answer(
+                "برای این بخش تصویر مرتبط موجود نیست."
                 if (lang or "").startswith("fa")
-                else "Catalog photo from stored product files."
+                else "No related image is stored for this section.",
+                reply_markup=ask_kb,
             )
-            if retrieval.units:
-                body = (retrieval.units[0].body or retrieval.units[0].title or "").strip()
-                if body:
-                    caption = body[:1000]
-            await users.append_chat(user.id, "user", text)
-            await users.append_chat(user.id, "assistant", caption)
-            await metrics.record_answered(referred_support=False, ai_solved=True)
-            await messaging.answer_with_media(
-                message, caption, images=media_paths, reply_markup=ask_kb
-            )
+            stages.mark("followup_none")
+            stages.flush()
             return
 
         operator_style = behavior_rules_text(settings.knowledge_root, ask_product)
@@ -196,15 +289,65 @@ def setup_chat_router(
             await users.append_chat(user.id, "user", text)
             await users.append_chat(user.id, "assistant", final)
             await metrics.record_answered(referred_support=False, ai_solved=True)
-            if media_paths:
-                await messaging.answer_with_media(
-                    message, final, images=media_paths, reply_markup=ask_kb
-                )
-            else:
-                await message.answer(final, reply_markup=ask_kb)
+            await message.answer(final, reply_markup=ask_kb)
+            stages.mark("memory_hit")
+            stages.flush()
             return
 
         match = None if ask_product else intents.match(text, lang, prior_blob=history_blob)
+        wait = await message.answer(texts.t(texts.THINKING, lang))
+        budget = ResponseBudget(min(float(settings.ai_timeout_seconds or 60) + 12.0, 72.0))
+        stages.mark("wait_msg")
+
+        intent_name = match.record.intent if match and match.record else None
+        faq_refs = None if ask_product else (match.record.faq_refs if match and match.record else None)
+
+        def _run_rag():
+            return retrieve_catalog_context(
+                text,
+                lang=lang,
+                project_root=settings.project_root,
+                limit_features=3,
+                limit_media=2,
+                product_id=ask_product,
+                prior_text="",
+            )
+
+        def _run_kb():
+            return knowledge.retrieve(
+                text,
+                lang,
+                faq_refs=faq_refs,
+                limit_chars=settings.knowledge_snippet_chars,
+                include_community=wants_contact_links(text) and not ask_product,
+                max_chunks=4 if ask_product else 6,
+                product_id=ask_product,
+            )
+
+        retrieval, kb_snip = await asyncio.gather(
+            asyncio.to_thread(_run_rag),
+            asyncio.to_thread(_run_kb),
+        )
+        stages.mark("retrieve")
+        if ask_product:
+            retrieval.units = [
+                u for u in retrieval.units if getattr(u, "product_id", "") == ask_product
+            ]
+            retrieval.media_units = [
+                u
+                for u in (retrieval.media_units or [])
+                if getattr(u, "product_id", "") == ask_product
+            ]
+        bundle = _bundle_from_retrieval(ask_product or "", text, retrieval)
+        media_paths = existing_media_paths(
+            bundle.media_refs,
+            product_id=ask_product or "",
+            knowledge_refs=bundle.knowledge_refs,
+            project_root=settings.project_root,
+            limit=2,
+        )
+        if not ask_product:
+            media_paths = []
 
         if (
             not ask_product
@@ -213,40 +356,36 @@ def setup_chat_router(
             and match.low_confidence
             and match.clarifying_question
         ):
+            try:
+                await wait.edit_text(match.clarifying_question)
+            except Exception:  # noqa: BLE001
+                await message.answer(match.clarifying_question, reply_markup=ask_kb)
             await users.append_chat(user.id, "user", text)
             await users.append_chat(user.id, "assistant", match.clarifying_question)
             await metrics.record_answered(referred_support=False, ai_solved=False)
-            await message.answer(
-                match.clarifying_question,
-                reply_markup=ask_kb,
-            )
+            stages.flush()
             return
-
-        wait = await message.answer(texts.t(texts.THINKING, lang))
-
-        intent_name = match.record.intent if match and match.record else None
-        faq_refs = None if ask_product else (match.record.faq_refs if match and match.record else None)
-
-        kb_limit = settings.knowledge_snippet_chars
-        if retrieval.insufficient:
-            kb_limit = max(kb_limit, 14000)
-        kb_snip = knowledge.retrieve(
-            text,
-            lang,
-            faq_refs=faq_refs,
-            limit_chars=kb_limit,
-            include_community=wants_contact_links(text) and not ask_product,
-            max_chunks=8 if retrieval.insufficient else 6,
-            product_id=ask_product,
-        )
 
         # License/site catalogs are Installer-oriented — only when that product is scoped
         catalog_snip = ""
         if not ask_product or ask_product == "vpn-installer":
             catalog_snip = catalog.catalog_snippet(text, lang=lang)
-        products_snip = ai_products_snippet(
-            text, lang=lang, product_id=ask_product
-        )
+        if ask_product:
+            cat = get_product(ask_product)
+            title = ""
+            if cat is not None:
+                title = (
+                    (cat.title or {}).get(lang)
+                    or (cat.title or {}).get("en")
+                    or ask_product
+                )
+            products_snip = f"Product identity: {ask_product}" + (
+                f" — {title}" if title else ""
+            )
+        else:
+            products_snip = ai_products_snippet(
+                text, lang=lang, product_id=ask_product
+            )
         site_snip = ""
         try:
             if (
@@ -281,7 +420,16 @@ def setup_chat_router(
         system = build_system_prompt(
             lang, facts_block=facts, operator_style=operator_style
         )
-        memory_snip = memory_prompt_block(settings.knowledge_root, ask_product)
+        catalog_teach = (
+            catalog_teaching_text(settings.knowledge_root, ask_product)
+            if ask_product
+            else ""
+        )
+        memory_snip = (
+            ""
+            if ask_product
+            else memory_prompt_block(settings.knowledge_root, ask_product)
+        )
 
         md_priority_note = (
             "### Priority\n"
@@ -289,33 +437,51 @@ def setup_chat_router(
             "2) Product catalog / screenshots.\n"
             "3) Other markdown only if memory and catalog lack the fact.\n"
             "Never invent steps. Follow operator behavior rules in every reply.\n"
+            "Write a tutor reply. Do not paste the entire teaching document.\n"
         )
 
-        def _scoped_catalog_fallback() -> str:
-            bits: list[str] = []
-            if retrieval.units:
-                bits.append(
-                    "\n\n".join(u.body for u in retrieval.units if (u.body or "").strip())
-                )
-            if (memory_snip or "").strip():
-                bits.append(memory_snip.strip()[:1600])
-            if (products_snip or "").strip():
-                bits.append(products_snip.strip()[:1800])
-            if (kb_snip or "").strip() and ask_product:
-                bits.append(kb_snip.strip()[:1200])
-            return "\n\n".join(b for b in bits if b).strip()
+        def _user_facing_fallback() -> str:
+            teach = strip_internal_prompt_lines(catalog_teach)
+            excerpt = excerpt_teaching_for_query(teach, text, limit=900)
+            if excerpt:
+                if (lang or "").startswith("fa"):
+                    return "بر اساس راهنمای همین محصول:\n\n" + excerpt
+                return "From this product catalog:\n\n" + excerpt
+            for unit in retrieval.units or []:
+                body = excerpt_teaching_for_query(unit.body or "", text, limit=700)
+                if body:
+                    return body
+            return ""
 
-        extra_sources = join_context_blocks(
-            [
-                memory_snip,
-                retrieval.prompt_block,
-                md_priority_note,
-                products_snip,
-                catalog_snip,
-                site_snip,
-            ],
-            11000,
-        )
+        if ask_product:
+            teach_excerpt = excerpt_teaching_for_query(
+                strip_internal_prompt_lines(catalog_teach), text, limit=900
+            )
+            extra_sources = join_context_blocks(
+                [
+                    products_snip,
+                    (
+                        "Relevant catalog teaching (do not paste the whole file):\n"
+                        + teach_excerpt
+                    )
+                    if teach_excerpt
+                    else "",
+                    retrieval.prompt_block,
+                ],
+                4000,
+            )
+        else:
+            extra_sources = join_context_blocks(
+                [
+                    memory_snip,
+                    retrieval.prompt_block,
+                    md_priority_note,
+                    products_snip,
+                    catalog_snip,
+                    site_snip,
+                ],
+                11000,
+            )
 
         history_section = history_blob or "(none)"
         product_scope = (
@@ -353,8 +519,33 @@ def setup_chat_router(
             "never rename official product names "
             "(Black Fox VPN Installer & Android, Config Builder, Ask AI, 3X-UI, …).\n"
             "CRITICAL: Output ONLY the final Telegram reply. "
-            "Do not write reasoning, constraint lists, or English meta analysis."
+            "Do not write reasoning, constraint lists, or English meta analysis. "
+            "Do not paste catalog teaching or memory files verbatim."
         )
+
+        async def _compact_retry() -> str:
+            teach = excerpt_teaching_for_query(
+                strip_internal_prompt_lines(catalog_teach), text, limit=900
+            )
+            if not teach:
+                return ""
+            compact = (
+                f"User question:\n{text}\n\n"
+                f"Product teaching (source only; do not paste the whole file):\n{teach}\n\n"
+                "Write a short Telegram tutor reply in the user's language. "
+                "Explain the asked part in a few lines. No file headers."
+            )
+            try:
+                return await ai.chat(
+                    [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": compact},
+                    ],
+                    max_tokens=max(1024, min(2048, int(settings.ai_max_tokens or 2048))),
+                )
+            except AIClientError:
+                logger.exception("Ask AI compact retry failed")
+                return ""
 
         try:
             answer = await ai.chat(
@@ -366,52 +557,71 @@ def setup_chat_router(
             )
         except AIClientError as exc:
             logger.exception("AI chat failed: %s", exc)
-            fallback = _scoped_catalog_fallback()
-            if not fallback and not ask_product and match and match.record:
-                fallback = (
-                    (match.record.full_answer or "").strip()
-                    or (match.record.short_answer or "").strip()
-                )
-            if not fallback and (
-                wants_contact_links(text) or wants_sales_nudge(text, intent_name)
-            ):
-                fallback = download_or_site_fallback(lang)
-            if fallback:
-                answer = fallback
-            elif media_paths:
-                answer = (
-                    "تصویر کاتالوگ از فایل ذخیره‌شده ارسال می‌شود."
-                    if (lang or "").startswith("fa")
-                    else "Sending the stored catalog photo."
-                )
+            retry = ""
+            if is_transient_ai_error(exc) and budget.can_retry():
+                retry = await _compact_retry()
+            safe_retry = prepare_user_reply(retry) if retry else ""
+            if safe_retry:
+                answer = safe_retry
             else:
-                try:
-                    await wait.edit_text(texts.t(texts.AI_ERROR, lang))
-                except Exception:  # noqa: BLE001
-                    await message.answer(texts.t(texts.AI_ERROR, lang))
-                return
+                fallback = _user_facing_fallback()
+                if not fallback and not ask_product and match and match.record:
+                    fallback = (
+                        (match.record.full_answer or "").strip()
+                        or (match.record.short_answer or "").strip()
+                    )
+                if not fallback and (
+                    wants_contact_links(text) or wants_sales_nudge(text, intent_name)
+                ):
+                    fallback = download_or_site_fallback(lang)
+                if fallback:
+                    answer = fallback
+                elif media_paths:
+                    answer = (
+                        "تصویر کاتالوگ از فایل ذخیره‌شده ارسال می‌شود."
+                        if (lang or "").startswith("fa")
+                        else "Sending the stored catalog photo."
+                    )
+                else:
+                    try:
+                        await wait.edit_text(texts.t(texts.AI_ERROR, lang))
+                    except Exception:  # noqa: BLE001
+                        await message.answer(texts.t(texts.AI_ERROR, lang))
+                    return
 
-        answer = strip_reasoning_leak(answer)
-        if looks_like_reasoning_leak(answer) or looks_incomplete_reply(answer):
-            logger.warning("Ask AI reply rejected (leak/incomplete); using safe fallback")
-            fallback = _scoped_catalog_fallback()
-            if not fallback and not ask_product and match and match.record:
-                fallback = (
-                    (match.record.full_answer or "").strip()
-                    or (match.record.short_answer or "").strip()
-                )
-            if wants_contact_links(text) or wants_sales_nudge(text, intent_name):
-                answer = download_or_site_fallback(lang)
-            elif fallback:
-                answer = fallback
-            elif media_paths:
-                answer = (
-                    "تصویر کاتالوگ از فایل ذخیره‌شده ارسال می‌شود."
-                    if (lang or "").startswith("fa")
-                    else "Sending the stored catalog photo."
-                )
+        safe = prepare_user_reply(answer)
+        if not safe or looks_incomplete_reply(safe):
+            logger.warning("Ask AI reply rejected (leak/incomplete); retry then fallback")
+            retry = ""
+            if budget.can_retry():
+                retry = await _compact_retry()
+            safe_retry = prepare_user_reply(retry) if retry else ""
+            if safe_retry:
+                answer = safe_retry
             else:
-                answer = texts.t(texts.AI_ERROR, lang)
+                fallback = _user_facing_fallback()
+                if not fallback and not ask_product and match and match.record:
+                    fallback = (
+                        (match.record.full_answer or "").strip()
+                        or (match.record.short_answer or "").strip()
+                    )
+                if wants_contact_links(text) or wants_sales_nudge(text, intent_name):
+                    answer = download_or_site_fallback(lang)
+                elif fallback:
+                    answer = fallback
+                elif media_paths:
+                    answer = (
+                        "تصویر کاتالوگ از فایل ذخیره‌شده ارسال می‌شود."
+                        if (lang or "").startswith("fa")
+                        else "Sending the stored catalog photo."
+                    )
+                else:
+                    answer = texts.t(texts.AI_ERROR, lang)
+
+        if looks_like_prompt_dump(answer) or not prepare_user_reply(answer):
+            answer = _user_facing_fallback() or texts.t(texts.AI_ERROR, lang)
+        else:
+            answer = prepare_user_reply(answer) or answer
 
         usage = ai.last_usage
         await metrics.record_token_usage(
@@ -442,9 +652,17 @@ def setup_chat_router(
 
         if len(final) > 4000:
             final = final[:3990] + "…"
+        if looks_like_prompt_dump(final) or not is_safe_to_persist(final):
+            if looks_like_prompt_dump(final):
+                final = texts.t(texts.AI_ERROR, lang)
 
         await users.append_chat(user.id, "user", text)
-        await users.append_chat(user.id, "assistant", final)
+        if is_safe_to_persist(final) or final == texts.t(texts.AI_ERROR, lang):
+            await users.append_chat(user.id, "assistant", final)
+        else:
+            safe_final = texts.t(texts.AI_ERROR, lang)
+            await users.append_chat(user.id, "assistant", safe_final)
+            final = safe_final
         await metrics.record_answered(referred_support=referred, ai_solved=solved)
 
         has_catalog = bool(retrieval.units) and not retrieval.insufficient
@@ -455,11 +673,32 @@ def setup_chat_router(
         source = "catalog" if has_catalog else ("md" if has_md else "none")
         if has_catalog and has_md:
             source = "catalog+md"
+        stages.mark("ai_and_safety")
+        try:
+            await wait.edit_text(final)
+        except Exception:
+            await message.answer(final, reply_markup=ask_kb)
+        stages.mark("send_text")
+        if ask_product and media_paths:
+            try:
+                await messaging.answer_with_media(
+                    message,
+                    " ",
+                    images=media_paths,
+                    reply_markup=ask_kb,
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("related media send failed")
+            stages.mark("send_media")
+        if ask_product:
+            bundle.answer_text = final
+            await users.set_last_ask_context(user.id, bundle.as_dict())
         if (
             ask_product
             and solved
             and not referred
             and final != texts.t(texts.AI_ERROR, lang)
+            and not looks_like_prompt_dump(final)
         ):
             try:
                 append_learned_answer(settings.knowledge_root, ask_product, text, final)
@@ -476,22 +715,6 @@ def setup_chat_router(
             )
         except Exception:  # noqa: BLE001
             logger.exception("answer memory save failed")
-
-        if media_paths:
-            try:
-                await wait.delete()
-            except Exception:  # noqa: BLE001
-                pass
-            await messaging.answer_with_media(
-                message,
-                final,
-                images=media_paths,
-                reply_markup=ask_kb,
-            )
-        else:
-            try:
-                await wait.edit_text(final)
-            except Exception:
-                await message.answer(final, reply_markup=ask_kb)
+        stages.flush()
 
     return router

@@ -28,6 +28,9 @@ TOPIC_ALIASES: dict[str, tuple[str, ...]] = {
     "inbound": ("configure_panel", "inbounds", "panel"),
     "outbound": ("configure_panel", "add_outbounds", "outbounds"),
     "outbounds": ("add_outbounds", "configure_panel"),
+    "اسکریپت": ("script", "scripts", "cli", "launch"),
+    "اسکریپ": ("script", "scripts"),
+    "script": ("اسکریپت", "cli", "launch"),
     "نصب": ("full_deploy", "deploy", "setup", "install"),
     "دیپلوی": ("full_deploy", "deploy"),
     "فول دیپلوی": ("full_deploy", "deploy", "wireguard", "3x-ui"),
@@ -167,6 +170,7 @@ class CatalogRetrieval:
     is_educational: bool
     insufficient: bool
     prompt_block: str
+    media_units: list[CatalogUnit] = field(default_factory=list)
     attach_media: bool = False
 
 
@@ -438,6 +442,7 @@ def retrieve_catalog_context(
         if not path.is_file():
             continue
         seen_paths.add(mu.media_path)
+        mu.score = bonus
         media_scored.append((bonus, mu))
 
     # Also resolve paths for evidence slots even if media unit scored low
@@ -483,32 +488,49 @@ def retrieve_catalog_context(
     # Deduplicate existing files only
     media_paths = [p for p in media_paths if p.is_file()]
 
-    # Follow-up "send it / ببینم" with a scoped product: attach folder photos even if score is weak.
-    if send_now and pid_filter and not media_paths:
+    # Product with 1–2 catalog photos and no scored filename match:
+    # those photos belong to this product's current section (e.g. Agent Hub GUI).
+    # Do not do this for large catalogs (Installer) — that would dump unrelated shots.
+    if pid_filter and not media_scored:
         from src.knowledge.catalog_index import listed_image_paths
 
-        media_paths = listed_image_paths(project_root, pid_filter, limit=max(limit_media, 4))
+        folder_paths = listed_image_paths(project_root, pid_filter, limit=8)
+        if 1 <= len(folder_paths) <= 2:
+            for path in folder_paths:
+                try:
+                    rel = str(path.resolve().relative_to(project_root.resolve())).replace("\\", "/")
+                except ValueError:
+                    rel = str(path)
+                mu = CatalogUnit(
+                    kind="media",
+                    product_id=pid_filter,
+                    unit_id=f"media:{pid_filter}:section:{path.name}",
+                    title=path.stem,
+                    body="Catalog screenshot for this product section",
+                    search_blob=_norm(f"{pid_filter} {path.name} screenshot"),
+                    media_path=rel,
+                    score=12.0,
+                )
+                media_scored.append((12.0, mu))
+            media_paths = [p.resolve() for p in folder_paths if p.is_file()][:2]
 
-    # Only attach screenshots when question is UI/howto-related AND media is strongly linked
     top_media_score = media_scored[0][0] if media_scored else 0.0
-    want_ui = wants_catalog_media(query) or wants_catalog_media(search_query)
+    linked = bool(wanted_feats or wanted_slots)
     attach_media = bool(
         media_paths
+        and pid_filter
         and (
-            send_now
-            or (
-                want_ui
-                and (top_media_score >= 12.0 or (educational and top_media_score >= 10.0) or send_now)
-            )
+            linked
+            or top_media_score >= 12.0
+            or (educational and top_media_score >= 10.0)
         )
     )
-    if not attach_media:
-        media_paths = []
 
-    insufficient = not evidence and not (send_now and media_paths)
+    insufficient = not evidence
+    picked_media = [m for _, m in media_scored[:limit_media]]
     prompt_block = _format_prompt_block(
         evidence=evidence,
-        media_units=[m for _, m in media_scored[:limit_media]] if attach_media else [],
+        media_units=picked_media,
         educational=educational,
         insufficient=insufficient,
         lang=lang,
@@ -526,6 +548,7 @@ def retrieve_catalog_context(
         is_educational=educational,
         insufficient=insufficient,
         prompt_block=prompt_block,
+        media_units=picked_media,
         attach_media=attach_media,
     )
 

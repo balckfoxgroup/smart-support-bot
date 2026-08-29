@@ -1103,6 +1103,8 @@ def setup_admin_settings_router(
                 "products_add_summary",
                 "products_edit",
                 "products_ai_training",
+                "products_ai_training_append",
+                "products_ai_training_replace",
                 "products_ai_training_hub",
                 "product_ai_chat",
                 "ai_chat_hub",
@@ -1310,6 +1312,8 @@ def setup_admin_settings_router(
             if mode_now in {
                 "products_ai_training_hub",
                 "products_ai_training",
+                "products_ai_training_append",
+                "products_ai_training_replace",
             } and pid_now and sess.get("from_catalog_wizard"):
                 sess["mode"] = "catalog_wizard"
                 await bot_settings.set_session(uid, sess)
@@ -1358,7 +1362,7 @@ def setup_admin_settings_router(
             await bot_settings.set_session(
                 uid,
                 {
-                    "mode": "products_ai_training",
+                    "mode": "products_ai_training_replace",
                     "product_id": pid,
                     "from_catalog_wizard": from_wizard,
                     "catalog_staging": str(_staging_dir(settings, uid, pid)),
@@ -1431,6 +1435,23 @@ def setup_admin_settings_router(
                 )
                 return
             if action == "products_ai_training":
+                sess_now = await bot_settings.get_session(uid)
+                if str(sess_now.get("mode") or "") == "products_ai_training_hub":
+                    await bot_settings.set_session(
+                        uid,
+                        {
+                            "mode": "products_ai_training_append",
+                            "product_id": pid,
+                            "from_catalog_wizard": bool(sess_now.get("from_catalog_wizard")),
+                            "catalog_staging": str(_staging_dir(settings, uid, pid)),
+                            "product_hint": pid,
+                        },
+                    )
+                    await message.answer(
+                        ak.msg("products_ask_training_append", lang),
+                        reply_markup=ak.training_hub_keyboard(lang),
+                    )
+                    return
                 await _show_training_hub(
                     message,
                     settings=settings,
@@ -1925,6 +1946,8 @@ def setup_admin_settings_router(
             "products_add_summary",
             "products_edit",
             "products_ai_training",
+            "products_ai_training_append",
+            "products_ai_training_replace",
             "products_ai_training_hub",
             "product_ai_chat",
             "ai_chat_hub",
@@ -2115,22 +2138,25 @@ def setup_admin_settings_router(
 
         if mode == "products_ai_training_hub":
             await message.answer(
-                "برای تغییر متن آموزشی کاتالوگ، «ویرایش متن آموزشی» را بزنید."
+                "برای افزودن متن، «ارسال متن آموزشی برای ai» و برای جایگزینی، «ویرایش متن آموزشی» را بزنید."
                 if (lang or "").startswith("fa")
-                else "Tap Edit training text to change the catalog teaching.",
+                else "Tap Send AI training text to append, or Edit to replace.",
                 reply_markup=ak.training_hub_keyboard(lang),
             )
             return
 
-        if mode == "products_ai_training":
+        if mode in {"products_ai_training", "products_ai_training_append", "products_ai_training_replace"}:
             pid = str(sess.get("product_id") or "").strip()
             if not pid:
                 await bot_settings.set_session(uid, {"mode": "products_hub"})
                 await _show_products_hub(message, settings, lang)
                 return
-            from src.knowledge.ai_memory import append_catalog_training
+            from src.knowledge.ai_memory import append_catalog_training, replace_catalog_training
 
-            append_catalog_training(settings.knowledge_root, pid, text)
+            if mode == "products_ai_training_replace":
+                replace_catalog_training(settings.knowledge_root, pid, text)
+            else:
+                append_catalog_training(settings.knowledge_root, pid, text)
             notify_knowledge_changed()
             await audit.write("product_ai_training", admin_id=uid, detail=pid)
             back_wizard = bool(sess.get("from_catalog_wizard"))
