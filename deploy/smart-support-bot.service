@@ -5,16 +5,16 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/smart-support-bot
-EnvironmentFile=/opt/smart-support-bot/.env
-ExecStart=/opt/smart-support-bot/.venv/bin/python -m src.main
+WorkingDirectory=/opt/Smart Support Bot
+EnvironmentFile=/opt/Smart Support Bot/.env
+ExecStart="/opt/Smart Support Bot/.venv/bin/python" -m src.main
 Restart=on-failure
 RestartSec=5
-# Hardening (root on dedicated VPS; ProtectSystem=full allows reading /opt/smart-support-bot)
+# Hardening (root on dedicated VPS; ProtectSystem=full allows reading install tree)
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ReadWritePaths=/opt/smart-support-bot/data /opt/smart-support-bot/media /opt/smart-support-bot/knowledge/product_catalogs
+ReadWritePaths="/opt/Smart Support Bot/data" "/opt/Smart Support Bot/media" "/opt/Smart Support Bot/knowledge/product_catalogs"
 
 [Install]
 WantedBy=multi-user.target

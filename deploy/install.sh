@@ -2,7 +2,7 @@
 # Install Smart Support Bot on Ubuntu (dedicated tiny VPS, runs as root).
 set -euo pipefail
 
-INSTALL_DIR="/opt/smart-support-bot"
+INSTALL_DIR="/opt/Smart Support Bot"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 

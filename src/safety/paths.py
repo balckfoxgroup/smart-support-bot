@@ -8,10 +8,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-# Bot package root = smart-support-bot/
+# Bot package root = /opt/Smart Support Bot (legacy: /opt/smart-support-bot)
 INSTALL_ROOT = Path(__file__).resolve().parents[2]
 
-if INSTALL_ROOT == Path("/opt/smart-support-bot"):
+_VPS_INSTALL_ROOTS = {
+    Path("/opt/Smart Support Bot"),
+    Path("/opt/smart-support-bot"),
+}
+
+if INSTALL_ROOT in _VPS_INSTALL_ROOTS:
+    # Keep safety store outside the install tree (stable path across renames).
     SAFETY_ROOT = Path("/opt/smart-support-bot-safety")
 else:
     SAFETY_ROOT = INSTALL_ROOT / "data" / "bot-safety"

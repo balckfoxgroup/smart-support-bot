@@ -1,6 +1,6 @@
 ﻿# Ask AI / Catalog change bundles (2026-08-16)
 
-Organized packages synced to GitHub `smart-support-bot` and VPS `/opt/smart-support-bot`.
+Organized packages synced to GitHub `smart-support-bot` and VPS `/opt/Smart Support Bot`.
 
 ## 01 — Catalog (product facts)
 - `knowledge/product_catalogs/vpn-installer.json`
@@ -19,7 +19,7 @@ Organized packages synced to GitHub `smart-support-bot` and VPS `/opt/smart-supp
 
 ## 04 — Service unit
 - `deploy/smart-support-bot.service`
-- WorkingDirectory `/opt/smart-support-bot`
+- WorkingDirectory `/opt/Smart Support Bot`
 - ReadWritePaths: `data`, `media`, `knowledge/product_catalogs`
 
 Runtime memory file is NOT committed (gitignore `data/*.json`).

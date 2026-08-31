@@ -102,7 +102,7 @@ python -m src.main
 Linux:
 
 ```bash
-cd /opt/smart-support-bot
+cd "/opt/Smart Support Bot"
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
