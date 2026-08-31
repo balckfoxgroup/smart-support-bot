@@ -34,76 +34,127 @@
 
 ---
 
-Async Telegram support bot for **Black Fox VPN Installer** (ops toolkit).
-Long polling · aiogram 3 · OpenAI-compatible chat API · local multilingual knowledge.
+## Overview / معرفی
+
+Async Telegram support bot for **Black Fox VPN Installer** (ops toolkit).  
+Long polling · **aiogram 3** · OpenAI-compatible chat API · local multilingual knowledge.
 
 Not an image/video/codegen bot.
 
-> This is the clean open-source release: no recorded data, no secrets.
+> Clean open-source release: no recorded user data, no secrets in the repo.  
 > Only the **Contact Creator** card (`knowledge/creator_contact.json`) ships pre-filled.
 
-## Features
+**Download ZIP:** [foxnext.net/downloads/smart-support-bot.zip](https://foxnext.net/downloads/smart-support-bot.zip)  
+Archive root folder: `Smart Support Bot/`
+
+<div dir="rtl">
+
+ربات پشتیبانی تلگرام برای **Black Fox VPN Installer** — اجرا به‌صورت async با **aiogram 3**، Long Polling، API سازگار با OpenAI و پایگاه دانش چندزبانهٔ محلی.
+
+ربات تولید تصویر/ویدیو/کد عمومی نیست؛ تمرکز روی پشتیبانی محصول است.
+
+> نسخهٔ متن‌باز تمیز است: دادهٔ کاربر و رمز در مخزن نیست.  
+> فقط کارت **تماس با سازنده** (`knowledge/creator_contact.json`) از پیش پر شده است.
+
+**دانلود ZIP:** [foxnext.net/downloads/smart-support-bot.zip](https://foxnext.net/downloads/smart-support-bot.zip)  
+پوشهٔ ریشه داخل آرشیو: `Smart Support Bot/`
+
+</div>
+
+## Features / امکانات
 
 - Languages: `fa`, `en`, `ru`, `zh` (Telegram `language_code` + `/lang`)
 - Intent match from `AI_BOT_DATABASE` (keyword / sample overlap)
-- Low confidence → clarifying question from intent DB
-- High confidence / after clarify → LLM with FAQ + KB snippets
-- Per-product catalog folders, training notes, and product-scoped operator chat
+- Low confidence → clarifying question; high confidence → LLM with FAQ + KB snippets
+- **Ask AI** scoped per product (catalog training + RAG; no internal prompt dumps to chat)
+- Per-product catalogs, admin training hub (append-only), product-scoped operator chat
+- Media send only when the user explicitly asks
 - Sales nudge (FOMO, no fake prices) → https://foxnext.net · @HiBlackFoxVpn
 - User language prefs in `data/users.json` (created on first run)
-- **Safe-change watchdog**: backup → apply → healthcheck → 60s admin confirm → keep or auto-restore
-  (`/safety_drill`, `/safety_status`; unit `smart-support-bot-watchdog.service`)
+- Social news job (verified sources → captioned posts)
+- Optional nightly free-config / conversation-analysis jobs
+- **Safe-change watchdog**: backup → apply → observe → admin confirm → keep or auto-restore  
+  (`/safety_drill`, `/safety_status`; `smart-support-bot-watchdog.service`)
 
-## Layout
+<div dir="rtl">
+
+- زبان‌ها: `fa`، `en`، `ru`، `zh` (بر اساس `language_code` تلگرام و دستور `/lang`)
+- تشخیص نیت از `AI_BOT_DATABASE`
+- اطمینان پایین → سؤال شفاف‌سازی؛ اطمینان بالا → پاسخ LLM با FAQ و قطعات دانش
+- **سوال از AI** محدود به هر محصول (آموزش کاتالوگ + RAG؛ بدون نشت پرامپت داخلی به چت)
+- کاتالوگ محصول، هاب آموزش ادمین (افزودن متن / append)، گفتگوی اپراتور به‌ازای محصول
+- ارسال عکس فقط وقتی کاربر صریح درخواست کند
+- پیام فروش بدون قیمت جعلی → سایت و @HiBlackFoxVpn
+- ذخیرهٔ زبان کاربر در `data/users.json`
+- ارسال خبرهای تأییدشدهٔ اینترنت
+- جاب‌های اختیاری: کانفیگ شبانه و تحلیل گفتگو
+- **نگهبان تغییر امن**: پشتیبان → اعمال → مشاهده → تأیید ادمین → نگه داشتن یا بازگردانی خودکار
+
+</div>
+
+## Layout / ساختار
+
+VPS install path: `/opt/Smart Support Bot`  
+Safety store (outside install tree): `/opt/smart-support-bot-safety`
 
 ```
-smart-support-bot/
+Smart Support Bot/
 ├── src/
 │   ├── main.py
 │   ├── config.py
-│   ├── ai/client.py
-│   ├── ai/persona.py
-│   ├── knowledge/loader.py
-│   ├── knowledge/intents.py
-│   ├── handlers/start.py
-│   ├── handlers/chat.py
-│   └── storage/users.py
+│   ├── ai/                 # client, persona, safety
+│   ├── handlers/           # start, chat, menu, admin, group, safety
+│   ├── knowledge/          # loader, intents, catalogs, RAG, Ask AI memory
+│   ├── safety/             # watchdog, backup, paths
+│   ├── control/            # agent registry & API keys
+│   ├── ui/                 # keyboards & messaging
+│   └── storage/            # users & runtime state helpers
 ├── knowledge/
 │   ├── AI_Knowledge_Base_Multilingual/
 │   ├── AI_BOT_DATABASE/
 │   ├── Support_Decision_Tree/
-│   ├── creator_contact.json      # Contact Creator card (pre-filled)
+│   ├── creator_contact.json
 │   ├── social_news_sources.json
 │   ├── product_catalogs/
 │   └── product_guides/
-├── data/.gitkeep                 # runtime files created here on first run
-├── media/                        # menu images + catalog images
+├── data/.gitkeep
+├── media/
 ├── docs/assets/logo.jpg
-├── deploy/smart-support-bot.service
+├── deploy/
+│   ├── install.sh
+│   ├── smart-support-bot.service
+│   └── smart-support-bot-watchdog.service
 ├── requirements.txt
 ├── .env.example
 └── README.md
 ```
 
-## Setup
+<div dir="rtl">
 
-Windows (PowerShell):
+مسیر نصب روی VPS: `/opt/Smart Support Bot`  
+مسیر safety (خارج از پوشهٔ نصب): `/opt/smart-support-bot-safety`
+
+</div>
+
+## Setup / راه‌اندازی
+
+### Windows (PowerShell)
 
 ```powershell
-cd smart-support-bot
+cd "Smart Support Bot"
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 Copy-Item .env.example .env
-# Edit .env: TELEGRAM_BOT_TOKEN, AI_API_KEY, BOT_ADMIN_IDS (your Telegram user id)
+# Edit .env: TELEGRAM_BOT_TOKEN, AI_API_KEY, BOT_ADMIN_IDS
 python -m src.main
 ```
 
-Linux:
+### Linux / VPS
 
 ```bash
 cd "/opt/Smart Support Bot"
-python3.11 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
@@ -111,11 +162,17 @@ cp .env.example .env
 python -m src.main
 ```
 
-> **`BOT_ADMIN_IDS` is required** to access the admin/Statistics menus.
-> Until you set it, admin-only buttons are simply inaccessible.
-> Find your numeric Telegram user id via a bot like `@userinfobot`.
+> **`BOT_ADMIN_IDS` is required** for admin / Statistics menus.  
+> Find your numeric Telegram id via `@userinfobot`.
 
-## Environment
+<div dir="rtl">
+
+> برای منوی ادمین و آمار، تنظیم **`BOT_ADMIN_IDS`** لازم است.  
+> شناسهٔ عددی تلگرام را از ربات‌هایی مثل `@userinfobot` بگیرید.
+
+</div>
+
+## Environment / متغیرهای محیطی
 
 | Variable | Required | Default | Notes |
 |----------|----------|---------|-------|
@@ -129,58 +186,114 @@ python -m src.main
 | `INTENT_CONFIDENCE_THRESHOLD` | no | `0.28` | |
 | `KNOWLEDGE_SNIPPET_CHARS` | no | `12000` | |
 | `LOG_LEVEL` | no | `INFO` | |
-| `BOT_ADMIN_IDS` | recommended | — | comma-separated numeric ids; admin menus |
+| `BOT_ADMIN_IDS` | recommended | — | comma-separated numeric ids |
 | `AI_BUDGET_USD` | no | `50` | |
 | `AI_USD_PER_MILLION_TOKENS` | no | `2.0` | |
 | `NIGHTLY_ENABLED` | no | `false` | free config to channel |
 | `NIGHTLY_IRAN_TIME` | no | `21:00` | |
 | `NIGHTLY_SUPPORT_CHAT_ID` | no | `@HiBlackFoxVpn` | |
-| `PANEL_BASE_URL` | when nightly enabled | — | 3x-ui panel |
-| `PANEL_API_TOKEN` | when nightly enabled | — | 3x-ui API token |
-| `PANEL_INBOUND_ID` | when nightly enabled | `0` | |
+| `PANEL_BASE_URL` | when nightly on | — | 3x-ui panel |
+| `PANEL_API_TOKEN` | when nightly on | — | |
+| `PANEL_INBOUND_ID` | when nightly on | `1` | |
 | `PANEL_REQUIRED_PORT` | no | `443` | |
-| `SOCIAL_NEWS_ENABLED` | no | `true` | verified Iran internet news |
-| `SOCIAL_NEWS_CHAT_ID` | no | `@blackFoxVPNN` | |
+| `SOCIAL_NEWS_ENABLED` | no | `true` | |
+| `SOCIAL_NEWS_CHAT_ID` | no | `@HiBlackFoxVPN` | |
 | `SOCIAL_NEWS_TIMES` | no | `10:00,17:00` | |
-| `CONVO_ANALYSIS_ENABLED` | no | `false` | private-chat → drafts |
+| `CONVO_ANALYSIS_ENABLED` | no | `false` | |
 | `CONVO_ANALYSIS_TIMES` | no | `12:30` | |
-| `CONVO_ANALYSIS_CHAT_ID` | when convo enabled | — | numeric id |
+| `CONVO_ANALYSIS_CHAT_ID` | when convo on | — | numeric id |
 | `CONVO_ANALYSIS_TEST_MODE` | no | `true` | |
-| `SAFETY_CONFIRM_CHAT_ID` | for safety drills | — | numeric id; confirm prompts |
-| `NEWS_REPORT_ADMIN_IDS` | no | — | extra ids for Stats → Report |
+| `SAFETY_CONFIRM_CHAT_ID` | for safety drills | — | numeric id |
+| `NEWS_REPORT_ADMIN_IDS` | no | — | extra Stats → Report ids |
 
-Social news: up to **80 sources** (`knowledge/social_news_sources.json`), AI editorial caption (headline + lead + emoji key points), catch-up after restart.
+Full template: `.env.example`
 
-## systemd
+<div dir="rtl">
+
+جدول بالا همهٔ متغیرهای مهم را نشان می‌دهد. الگوی کامل در `.env.example` است.  
+کلیدها و توکن‌ها را هرگز در Git commit نکنید.
+
+</div>
+
+## systemd / استقرار سرویس
 
 ```bash
-sudo cp deploy/smart-support-bot.service /etc/systemd/system/
-sudo cp deploy/smart-support-bot-watchdog.service /etc/systemd/system/
+sudo cp "/opt/Smart Support Bot/deploy/smart-support-bot.service" /etc/systemd/system/
+sudo cp "/opt/Smart Support Bot/deploy/smart-support-bot-watchdog.service" /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now smart-support-bot
 sudo systemctl enable --now smart-support-bot-watchdog
 ```
 
-Or use the bundled installer:
+Or:
 
 ```bash
-sudo bash deploy/install.sh
+sudo bash "/opt/Smart Support Bot/deploy/install.sh"
 ```
 
-## Commands
+<div dir="rtl">
 
-- `/start` — greeting
-- `/help` — short help
-- `/lang fa|en|ru|zh` — persist language
-- `/safety_drill`, `/safety_status` — admin only (safe-change watchdog)
+واحدهای systemd مسیر کاری را روی `/opt/Smart Support Bot` تنظیم می‌کنند.  
+می‌توانید از `deploy/install.sh` برای نصب یک‌مرحله‌ای استفاده کنید.
 
-## Safety / product rules
+</div>
+
+## Commands / دستورات
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Greeting / شروع |
+| `/help` | Short help / راهنمای کوتاه |
+| `/lang fa\|en\|ru\|zh` | Persist language / ذخیره زبان |
+| `/safety_drill` | Admin: run safe-change drill |
+| `/safety_status` | Admin: watchdog status |
+
+<div dir="rtl">
+
+دستورات `/safety_*` فقط برای ادمین (شناسه‌های `BOT_ADMIN_IDS`) فعال‌اند.
+
+</div>
+
+## Ask AI & Catalog / سوال از AI و کاتالوگ
+
+- Admin can store **catalog training text** per product (hub shows status only; Edit shows full text; new text is appended).
+- User **Ask AI** answers from that product’s training + catalog RAG.
+- Failures fall back to a short teaching excerpt — not the full internal prompt.
+- Photos are sent only on explicit request (e.g. «عکسش را بفرست»).
+
+<div dir="rtl">
+
+- ادمین می‌تواند **متن آموزشی کاتالوگ** را برای هر محصول ذخیره کند (هاب فقط وضعیت؛ ویرایش متن کامل؛ متن جدید به ادامه اضافه می‌شود).
+- **سوال از AI** کاربر از آموزش همان محصول و RAG کاتالوگ پاسخ می‌دهد.
+- در خطا، خلاصهٔ کوتاه آموزشی برمی‌گردد — نه کل پرامپت داخلی.
+- عکس فقط با درخواست صریح کاربر ارسال می‌شود.
+
+</div>
+
+## Safety / product rules / قوانین ایمنی
 
 - No invented versions or prices
 - VPS only via FoxNext Partners on foxnext.net
 - License sales: scarcity framing without fake numbers; link site + @HiBlackFoxVpn
+- Never commit `.env`, runtime `data/*.json`, or Telegram sessions
 
-## License & credit
+<div dir="rtl">
 
-Released free and open source. If it helps you, ⭐ the repo.
+- نسخه یا قیمت جعلی نسازید
+- VPS فقط از طریق شرکای FoxNext در foxnext.net
+- فروش لایسنس بدون عدد ساختگی؛ لینک سایت و @HiBlackFoxVpn
+- هرگز `.env`، فایل‌های runtime در `data/` یا session تلگرام را commit نکنید
+
+</div>
+
+## License & credit / مجوز و اعتبار
+
+Released free and open source. If it helps you, ⭐ the repo.  
 🦊 Built by **Black Fox** — https://foxnext.net · @HiBlackFoxVpn
+
+<div dir="rtl">
+
+منتشرشده به‌صورت رایگان و متن‌باز. اگر مفید بود، به مخزن ⭐ بدهید.  
+🦊 ساختهٔ **Black Fox** — https://foxnext.net · @HiBlackFoxVpn
+
+</div>
